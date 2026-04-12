@@ -333,6 +333,7 @@ async def delete_memory_by_id(
 class ExtractMemoriesForm(BaseModel):
     messages: List[dict]
     model: str
+    full_scan: bool = False  # True = scan entire conversation, False = current exchange only
 
 
 @router.post('/extract', response_model=list[MemoryModel])
@@ -342,14 +343,16 @@ async def extract_memories_from_messages(
     user=Depends(get_verified_user),
 ):
     """
-    Manually trigger long-term memory extraction from a list of messages.
-    Returns the list of memories that were added or updated.
+    Manually trigger long-term memory extraction from a conversation.
+
+    - full_scan=false (default): extracts only from the last user+assistant exchange
+    - full_scan=true: scans the entire conversation history (use on first activation)
+
+    Returns current memory list after extraction.
     """
     from open_webui.utils.memory_extractor import (
-        _format_conversation_for_extraction,
-        _call_llm_for_extraction,
-        _is_duplicate,
-        _upsert_memory,
+        extract_and_store_memories,
+        extract_and_store_memories_full,
     )
 
     if not request.app.state.config.ENABLE_MEMORIES:
@@ -364,24 +367,9 @@ async def extract_memories_from_messages(
             detail=ERROR_MESSAGES.ACCESS_PROHIBITED,
         )
 
-    conversation = _format_conversation_for_extraction(form_data.messages)
-    if not conversation:
-        return []
+    if form_data.full_scan:
+        await extract_and_store_memories_full(request, form_data.messages, form_data.model, user)
+    else:
+        await extract_and_store_memories(request, form_data.messages, form_data.model, user)
 
-    facts = await _call_llm_for_extraction(request, form_data.model, conversation, user)
-    if not facts:
-        return []
-
-    updated_memories = []
-    for fact in facts:
-        duplicate_id = await _is_duplicate(request, user.id, fact, user)
-        await _upsert_memory(request, user.id, duplicate_id, fact, user)
-        if duplicate_id:
-            mem = Memories.get_memory_by_id(duplicate_id)
-        else:
-            mems = Memories.get_memories_by_user_id(user.id)
-            mem = next((m for m in (mems or []) if m.content == fact), None)
-        if mem:
-            updated_memories.append(mem)
-
-    return updated_memories
+    return Memories.get_memories_by_user_id(user.id) or []
