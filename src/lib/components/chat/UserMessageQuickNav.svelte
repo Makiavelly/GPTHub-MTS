@@ -20,15 +20,37 @@
 
 	let rootElement: HTMLDivElement;
 	let containerElement: HTMLElement | null = null;
+	let expandedScrollElement: HTMLDivElement;
 	let activeMessageId: string | null = null;
 	let isHovered = false;
 	let isMobileExpanded = false;
 	let frameId: number | null = null;
-	let userMessages = [];
+	let userMessages: QuickNavMessage[] = [];
+	let collapsedMessages: QuickNavMessage[] = [];
 	let isExpanded = false;
+
+	const COLLAPSED_VISIBLE_COUNT = 9;
 
 	$: userMessages = messages.filter((message) => message?.role === 'user');
 	$: isExpanded = $mobile ? isMobileExpanded : isHovered;
+	$: {
+		if (userMessages.length <= COLLAPSED_VISIBLE_COUNT) {
+			collapsedMessages = userMessages;
+		} else {
+			const resolvedActiveIndex = userMessages.findIndex((message) => message.id === activeMessageId);
+			const activeIndex = resolvedActiveIndex >= 0 ? resolvedActiveIndex : 0;
+			let startIndex =
+				Math.floor(activeIndex / COLLAPSED_VISIBLE_COUNT) * COLLAPSED_VISIBLE_COUNT;
+			let endIndex = Math.min(startIndex + COLLAPSED_VISIBLE_COUNT, userMessages.length);
+
+			if (endIndex - startIndex < COLLAPSED_VISIBLE_COUNT) {
+				startIndex = Math.max(0, endIndex - COLLAPSED_VISIBLE_COUNT);
+				endIndex = userMessages.length;
+			}
+
+			collapsedMessages = userMessages.slice(startIndex, endIndex);
+		}
+	}
 
 	const getPreview = (message: QuickNavMessage) => {
 		const content =
@@ -124,6 +146,20 @@
 		}
 	};
 
+	const syncExpandedScroll = () => {
+		if (!isExpanded || !expandedScrollElement || !activeMessageId) {
+			return;
+		}
+
+		const activeButton = Array.from(
+			expandedScrollElement.querySelectorAll<HTMLButtonElement>('[data-message-id]')
+		).find((element) => element.dataset.messageId === activeMessageId);
+
+		activeButton?.scrollIntoView({
+			block: 'nearest'
+		});
+	};
+
 	onMount(() => {
 		containerElement = document.getElementById(containerId);
 
@@ -154,6 +190,12 @@
 			scheduleActiveMessageUpdate();
 		});
 	}
+
+	$: if (typeof window !== 'undefined' && isExpanded && activeMessageId) {
+		tick().then(() => {
+			syncExpandedScroll();
+		});
+	}
 </script>
 
 {#if userMessages.length > 1}
@@ -177,10 +219,15 @@
 			<div
 				class="w-48 max-w-[70vw] rounded-3xl border border-gray-200/80 bg-white/92 p-2.5 shadow-2xl backdrop-blur-md dark:border-gray-700/70 dark:bg-gray-900/92"
 			>
-				<div class="flex flex-col gap-1">
+				<div
+					bind:this={expandedScrollElement}
+					class="quick-nav-scroll flex flex-col gap-1 overflow-y-auto overscroll-contain pr-1"
+					style="max-height: min(18rem, 55vh);"
+				>
 					{#each userMessages as message}
 						<button
 							type="button"
+							data-message-id={message.id}
 							class="flex w-full items-center gap-2 rounded-2xl px-3 py-2 text-left text-xs transition hover:bg-blue-50 dark:hover:bg-gray-800"
 							on:click={() => scrollToMessage(message.id)}
 						>
@@ -211,7 +258,7 @@
 					}
 				}}
 			>
-				{#each userMessages as message}
+				{#each collapsedMessages as message}
 					<span
 						class="h-0.5 w-3 rounded-full transition {activeMessageId === message.id
 							? 'bg-blue-500'
@@ -222,3 +269,28 @@
 		{/if}
 	</div>
 {/if}
+
+<style>
+	.quick-nav-scroll {
+		scrollbar-width: thin;
+		scrollbar-color: rgba(96, 165, 250, 0.9) rgba(148, 163, 184, 0.12);
+	}
+
+	.quick-nav-scroll::-webkit-scrollbar {
+		width: 6px;
+	}
+
+	.quick-nav-scroll::-webkit-scrollbar-track {
+		background: rgba(148, 163, 184, 0.12);
+		border-radius: 999px;
+	}
+
+	.quick-nav-scroll::-webkit-scrollbar-thumb {
+		background: rgba(96, 165, 250, 0.9);
+		border-radius: 999px;
+	}
+
+	.quick-nav-scroll::-webkit-scrollbar-thumb:hover {
+		background: rgba(59, 130, 246, 1);
+	}
+</style>
