@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 import logging
 import asyncio
-from typing import Optional
+from typing import Optional, List
 
 from open_webui.models.memories import Memories, MemoryModel
 from open_webui.retrieval.vector.factory import VECTOR_DB_CLIENT
@@ -322,3 +322,66 @@ async def delete_memory_by_id(
         return True
 
     return False
+
+
+############################
+# ExtractMemoriesFromMessages
+# Manually trigger memory extraction from a conversation
+############################
+
+
+class ExtractMemoriesForm(BaseModel):
+    messages: List[dict]
+    model: str
+
+
+@router.post('/extract', response_model=list[MemoryModel])
+async def extract_memories_from_messages(
+    request: Request,
+    form_data: ExtractMemoriesForm,
+    user=Depends(get_verified_user),
+):
+    """
+    Manually trigger long-term memory extraction from a list of messages.
+    Returns the list of memories that were added or updated.
+    """
+    from open_webui.utils.memory_extractor import (
+        _format_conversation_for_extraction,
+        _call_llm_for_extraction,
+        _is_duplicate,
+        _upsert_memory,
+    )
+
+    if not request.app.state.config.ENABLE_MEMORIES:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=ERROR_MESSAGES.NOT_FOUND,
+        )
+
+    if not has_permission(user.id, 'features.memories', request.app.state.config.USER_PERMISSIONS):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=ERROR_MESSAGES.ACCESS_PROHIBITED,
+        )
+
+    conversation = _format_conversation_for_extraction(form_data.messages)
+    if not conversation:
+        return []
+
+    facts = await _call_llm_for_extraction(request, form_data.model, conversation, user)
+    if not facts:
+        return []
+
+    updated_memories = []
+    for fact in facts:
+        duplicate_id = await _is_duplicate(request, user.id, fact, user)
+        await _upsert_memory(request, user.id, duplicate_id, fact, user)
+        if duplicate_id:
+            mem = Memories.get_memory_by_id(duplicate_id)
+        else:
+            mems = Memories.get_memories_by_user_id(user.id)
+            mem = next((m for m in (mems or []) if m.content == fact), None)
+        if mem:
+            updated_memories.append(mem)
+
+    return updated_memories

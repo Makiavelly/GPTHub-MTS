@@ -57,6 +57,7 @@ from open_webui.routers.pipelines import (
     process_pipeline_outlet_filter,
 )
 from open_webui.routers.memories import query_memory, QueryMemoryForm
+from open_webui.utils.memory_extractor import extract_and_store_memories
 
 from open_webui.utils.webhook import post_webhook
 from open_webui.utils.files import (
@@ -3041,6 +3042,20 @@ async def background_tasks_handler(ctx):
                             )
                         except Exception as e:
                             pass
+
+    # Auto-extract long-term memories from this conversation turn.
+    # Runs as a fire-and-forget background task so it doesn't delay the response.
+    if (
+        messages
+        and message
+        and getattr(request.app.state.config, 'ENABLE_MEMORIES', False)
+        and not metadata.get('chat_id', '').startswith('local:')
+    ):
+        model_id = message.get('model', form_data.get('model', ''))
+        if model_id:
+            asyncio.create_task(
+                extract_and_store_memories(request, messages, model_id, user)
+            )
 
 
 async def non_streaming_chat_response_handler(response, ctx):
