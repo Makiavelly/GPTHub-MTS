@@ -454,6 +454,15 @@
 	let user = null;
 	export let placeholder = '';
 
+	let taskMode = 'auto';
+	const modes = [
+		{ id: 'auto', icon: '✨', label: 'Авто' },
+		{ id: 'code', icon: '💻', label: 'Код' },
+		{ id: 'search', icon: '🔍', label: 'Поиск' },
+		{ id: 'vision', icon: '👁', label: 'Анализ' },
+		{ id: 'image', icon: '🎨', label: 'Картинка' }
+	];
+
 	let visionCapableModels = [];
 	$: visionCapableModels = (atSelectedModel?.id ? [atSelectedModel.id] : selectedModels).filter(
 		(model) => $models.find((m) => m.id === model)?.info?.meta?.capabilities?.vision ?? true
@@ -1557,10 +1566,29 @@
 											{/key}
 										{/key}
 									{/if}
-								</div>
 							</div>
+						</div>
 
-							<div class=" flex justify-between mt-0.5 mb-2.5 mx-0.5 max-w-full" dir="ltr">
+						<div class="mx-0.5 flex flex-wrap gap-1.5 px-2 pb-1" dir="ltr">
+							{#each modes as mode}
+								<button
+									type="button"
+									class="flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition {taskMode ===
+									mode.id
+										? 'border-blue-500 bg-blue-600 text-white'
+										: 'border-transparent text-gray-500 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-100'}"
+									aria-pressed={taskMode === mode.id}
+									on:click={() => {
+										taskMode = mode.id;
+									}}
+								>
+									<span aria-hidden="true">{mode.icon}</span>
+									<span class="font-medium">{mode.label}</span>
+								</button>
+							{/each}
+						</div>
+
+						<div class=" flex justify-between mt-0.5 mb-2.5 mx-0.5 max-w-full" dir="ltr">
 								<div class="ml-1 self-end flex items-center flex-1 max-w-[80%]">
 									<InputMenu
 										bind:files

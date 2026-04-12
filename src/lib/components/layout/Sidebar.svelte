@@ -64,6 +64,7 @@
 	import Sidebar from '../icons/Sidebar.svelte';
 	import PinnedModelList from './Sidebar/PinnedModelList.svelte';
 	import Note from '../icons/Note.svelte';
+	import MemoryPanel from './MemoryPanel.svelte';
 	import { slide } from 'svelte/transition';
 	import HotkeyHint from '../common/HotkeyHint.svelte';
 
@@ -88,6 +89,7 @@
 	let showPinnedModels = false;
 	let showChannels = false;
 	let showFolders = false;
+	let showMemory = false;
 
 	let folders = {};
 	let folderRegistry = {};
@@ -712,11 +714,11 @@
 						aria-label={$showSidebar ? $i18n.t('Close Sidebar') : $i18n.t('Open Sidebar')}
 					>
 						<div class=" self-center flex items-center justify-center size-9">
-							<img
-								src="{WEBUI_BASE_URL}/static/favicon.png"
-								class="sidebar-new-chat-icon size-6 rounded-full group-hover:hidden"
-								alt=""
-							/>
+							<div
+								class="sidebar-new-chat-icon flex size-6 items-center justify-center rounded-2xl bg-gradient-to-br from-red-900 to-red-600 text-[0.625rem] font-black tracking-tight text-orange-50 group-hover:hidden"
+							>
+								GH
+							</div>
 
 							<Sidebar className="size-5 hidden group-hover:flex" />
 						</div>
@@ -906,12 +908,11 @@
 					draggable="false"
 					on:click={newChatHandler}
 				>
-					<img
-						crossorigin="anonymous"
-						src="{WEBUI_BASE_URL}/static/favicon.png"
-						class="sidebar-new-chat-icon size-6 rounded-full"
-						alt=""
-					/>
+					<div
+						class="sidebar-new-chat-icon flex size-6 items-center justify-center rounded-2xl bg-gradient-to-br from-red-900 to-red-600 text-[0.625rem] font-black tracking-tight text-orange-50"
+					>
+						GH
+					</div>
 				</a>
 
 				<a href="/" class="flex flex-1 px-1.5" on:click={newChatHandler}>
@@ -1401,6 +1402,23 @@
 					class=" sidebar-bg-gradient-to-t bg-linear-to-t from-gray-50 dark:from-gray-950 to-transparent from-50% pointer-events-none absolute inset-0 -z-10 -mt-6"
 				></div>
 				<div class="flex flex-col font-primary">
+					<button
+						type="button"
+						class="mb-2 flex w-full items-center gap-2 rounded-2xl border border-gray-200 px-3 py-2 text-left text-sm text-gray-600 transition hover:bg-gray-100/70 hover:text-gray-900 dark:border-gray-800 dark:text-gray-300 dark:hover:bg-gray-900 dark:hover:text-gray-100"
+						on:click={() => {
+							showMemory = !showMemory;
+						}}
+					>
+						<span aria-hidden="true">🧠</span>
+						<span class="flex-1">{showMemory ? 'Скрыть память' : 'Память'}</span>
+					</button>
+
+					{#if showMemory}
+						<div class="mb-2">
+							<MemoryPanel />
+						</div>
+					{/if}
+
 					{#if $user !== undefined && $user !== null}
 						<UserMenu
 							role={$user?.role}

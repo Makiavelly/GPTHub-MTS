@@ -66,16 +66,24 @@
 	interface MessageType {
 		id: string;
 		model: string;
+		selectedModelId?: string;
 		content: string;
 		files?: { type: string; url: string }[];
 		timestamp: number;
 		role: string;
+		parentId?: string | null;
+		embeds?: string[];
+		citations?: unknown[];
+		followUps?: string[];
+		arena?: boolean;
+		feedbackId?: string;
 		statusHistory?: {
 			done: boolean;
 			action: string;
 			description: string;
 			urls?: string[];
 			query?: string;
+			hidden?: boolean;
 		}[];
 		status?: {
 			done: boolean;
@@ -83,6 +91,7 @@
 			description: string;
 			urls?: string[];
 			query?: string;
+			hidden?: boolean;
 		};
 		done: boolean;
 		error?: boolean | { content: string };
@@ -167,6 +176,18 @@
 
 	let model = null;
 	$: model = $models.find((m) => m.id === message.model);
+
+	const getModelBadge = (modelId = '') => {
+		if (modelId.includes('kodify')) {
+			return { icon: '💻', label: modelId };
+		}
+
+		if (modelId.includes('bge')) {
+			return { icon: '🧠', label: modelId };
+		}
+
+		return { icon: '✨', label: modelId || 'mws-gpt-alpha' };
+	};
 
 	$: statusEntries = message?.statusHistory ?? [...(message?.status ? [message?.status] : [])];
 	$: hasVisibleStatus =
@@ -847,6 +868,18 @@
 
 							{#if message.code_executions}
 								<CodeExecutions codeExecutions={message.code_executions} />
+							{/if}
+
+							{#if message.role === 'assistant'}
+								{@const badge = getModelBadge(message.selectedModelId ?? message.model ?? '')}
+								<div class="mt-3">
+									<span
+										class="inline-flex items-center gap-1 rounded-full border border-gray-200 px-2.5 py-1 text-[11px] text-gray-500 dark:border-gray-800 dark:text-gray-400"
+									>
+										<span aria-hidden="true">{badge.icon}</span>
+										{badge.label}
+									</span>
+								</div>
 							{/if}
 						</div>
 					</div>
