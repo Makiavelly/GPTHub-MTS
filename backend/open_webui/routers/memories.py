@@ -4,7 +4,7 @@ import logging
 import asyncio
 from typing import Optional, List
 
-from open_webui.models.memories import Memories, MemoryModel
+from open_webui.models.memories import Memories, MemoryModel, MemoryProfiles, MemoryProfileModel
 from open_webui.retrieval.vector.factory import VECTOR_DB_CLIENT
 from open_webui.utils.auth import get_verified_user
 from open_webui.internal.db import get_session
@@ -322,6 +322,32 @@ async def delete_memory_by_id(
         return True
 
     return False
+
+
+############################
+# GetMemoryProfile
+############################
+
+
+@router.get('/profile', response_model=Optional[MemoryProfileModel])
+async def get_memory_profile(
+    request: Request,
+    user=Depends(get_verified_user),
+    db: Session = Depends(get_session),
+):
+    if not request.app.state.config.ENABLE_MEMORIES:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=ERROR_MESSAGES.NOT_FOUND,
+        )
+
+    if not has_permission(user.id, 'features.memories', request.app.state.config.USER_PERMISSIONS):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=ERROR_MESSAGES.ACCESS_PROHIBITED,
+        )
+
+    return MemoryProfiles.get_profile(user.id)
 
 
 ############################

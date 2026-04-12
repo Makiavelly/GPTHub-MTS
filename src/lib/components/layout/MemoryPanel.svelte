@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import dayjs from '$lib/dayjs';
 	import { toast } from 'svelte-sonner';
-	import { deleteMemoryById, getMemories } from '$lib/apis/memories';
+	import { deleteMemoryById, getMemories, getMemoryProfile } from '$lib/apis/memories';
 
 	type MemoryItem = {
 		id: string;
@@ -13,6 +13,13 @@
 		created_at?: number;
 	};
 
+	type ProfileItem = {
+		user_id: string;
+		content: string;
+		fact_count_at_generation: number;
+		updated_at: number;
+	} | null;
+
 	const SCOPE_LABELS: Record<string, { label: string; color: string }> = {
 		personal:   { label: 'Личное',     color: 'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300' },
 		work:       { label: 'Работа',     color: 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300' },
@@ -21,9 +28,11 @@
 	};
 
 	let memories: MemoryItem[] = [];
+	let profile: ProfileItem = null;
 	let loading = true;
 	let refreshing = false;
 	let filterScope = 'all';
+	let showProfile = false;
 
 	$: filteredMemories = filterScope === 'all'
 		? memories
@@ -32,8 +41,12 @@
 	const loadMemories = async () => {
 		loading = true;
 		try {
-			const raw = (await getMemories(localStorage.token)) ?? [];
-			memories = raw.sort((a: MemoryItem, b: MemoryItem) => (b.updated_at ?? 0) - (a.updated_at ?? 0));
+			const [raw, prof] = await Promise.all([
+				getMemories(localStorage.token),
+				getMemoryProfile(localStorage.token).catch(() => null),
+			]);
+			memories = (raw ?? []).sort((a: MemoryItem, b: MemoryItem) => (b.updated_at ?? 0) - (a.updated_at ?? 0));
+			profile = prof ?? null;
 		} catch (error) {
 			memories = [];
 			toast.error(`${error}`);
@@ -45,8 +58,12 @@
 	const refreshMemories = async () => {
 		refreshing = true;
 		try {
-			const raw = (await getMemories(localStorage.token)) ?? [];
-			memories = raw.sort((a: MemoryItem, b: MemoryItem) => (b.updated_at ?? 0) - (a.updated_at ?? 0));
+			const [raw, prof] = await Promise.all([
+				getMemories(localStorage.token),
+				getMemoryProfile(localStorage.token).catch(() => null),
+			]);
+			memories = (raw ?? []).sort((a: MemoryItem, b: MemoryItem) => (b.updated_at ?? 0) - (a.updated_at ?? 0));
+			profile = prof ?? null;
 		} catch (error) {
 			toast.error(`${error}`);
 		} finally {
@@ -107,6 +124,28 @@
 	<p class="mb-2 text-[10px] leading-4 text-gray-400 dark:text-gray-500">
 		Обновляется автоматически · новые факты сверху
 	</p>
+
+	<!-- User profile block -->
+	{#if profile?.content}
+		<div class="mb-2 rounded-2xl border border-indigo-200 bg-indigo-50/70 p-2.5 dark:border-indigo-800 dark:bg-indigo-950/40">
+			<div class="mb-1 flex items-center justify-between">
+				<span class="text-[10px] font-semibold text-indigo-600 dark:text-indigo-400">Профиль пользователя</span>
+				<button
+					type="button"
+					class="text-[10px] text-indigo-400 hover:text-indigo-600 dark:text-indigo-500 dark:hover:text-indigo-300"
+					on:click={() => (showProfile = !showProfile)}
+				>
+					{showProfile ? 'Свернуть' : 'Развернуть'}
+				</button>
+			</div>
+			{#if showProfile}
+				<p class="text-[11px] leading-5 text-gray-700 dark:text-gray-300">{profile.content}</p>
+				<p class="mt-1 text-[9px] text-indigo-400 dark:text-indigo-600">
+					на основе {profile.fact_count_at_generation} фактов · {dayjs(profile.updated_at * 1000).format('DD.MM HH:mm')}
+				</p>
+			{/if}
+		</div>
+	{/if}
 
 	{#if loading}
 		<p class="py-4 text-center text-xs text-gray-500 dark:text-gray-400">Загрузка...</p>
