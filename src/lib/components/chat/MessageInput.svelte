@@ -130,12 +130,13 @@
 	export let imageGenerationEnabled = false;
 	export let webSearchEnabled = false;
 	export let codeInterpreterEnabled = false;
+	export let taskMode = 'auto';
 
 	export let pendingOAuthTools = [];
 
 	let showTerminalMenu = false;
 
-	export let messageQueue: { id: string; prompt: string; files: any[] }[] = [];
+	export let messageQueue: { id: string; prompt: string; files: any[]; taskMode?: string }[] = [];
 	export let onQueueSendNow: (id: string) => void = () => {};
 	export let onQueueEdit: (id: string) => void = () => {};
 	export let onQueueDelete: (id: string) => void = () => {};
@@ -454,7 +455,6 @@
 	let user = null;
 	export let placeholder = '';
 
-	let taskMode = 'auto';
 	const modes = [
 		{ id: 'auto', icon: '✨', label: 'Авто' },
 		{ id: 'code', icon: '💻', label: 'Код' },
@@ -462,6 +462,11 @@
 		{ id: 'vision', icon: '👁', label: 'Анализ' },
 		{ id: 'image', icon: '🎨', label: 'Картинка' }
 	];
+
+	const getSubmitPayload = () => ({
+		prompt,
+		taskMode
+	});
 
 	let visionCapableModels = [];
 	$: visionCapableModels = (atSelectedModel?.id ? [atSelectedModel.id] : selectedModels).filter(
@@ -1208,7 +1213,7 @@
 								document.getElementById('chat-input')?.focus();
 
 								if ($settings?.speechAutoSend ?? false) {
-									dispatch('submit', prompt);
+									dispatch('submit', getSubmitPayload());
 								}
 							}}
 						/>
@@ -1217,7 +1222,7 @@
 						class="w-full flex flex-col gap-1.5 {recording ? 'hidden' : ''}"
 						on:submit|preventDefault={() => {
 							// check if selectedModels support image input
-							dispatch('submit', prompt);
+							dispatch('submit', getSubmitPayload());
 						}}
 					>
 						<button
@@ -1509,7 +1514,7 @@
 																if (enterPressed) {
 																	e.preventDefault();
 																	if (prompt !== '' || files.length > 0) {
-																		dispatch('submit', prompt);
+																		dispatch('submit', getSubmitPayload());
 																	}
 																}
 															}

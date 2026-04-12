@@ -149,6 +149,7 @@
 	let imageGenerationEnabled = false;
 	let webSearchEnabled = false;
 	let codeInterpreterEnabled = false;
+	let taskMode = 'auto';
 
 	let showCommands = false;
 
@@ -1759,7 +1760,10 @@
 	// Chat functions
 	//////////////////////////
 
-	const submitPrompt = async (userPrompt, { _raw = false } = {}) => {
+	const submitPrompt = async (
+		userPrompt,
+		{ _raw = false, taskMode: requestedTaskMode = taskMode } = {}
+	) => {
 		console.log('submitPrompt', userPrompt, $chatId);
 
 		const _selectedModels = selectedModels.map((modelId) =>
@@ -1816,7 +1820,10 @@
 				const _files = structuredClone(files);
 				chatRequestQueues.update((q) => ({
 					...q,
-					[$chatId]: [...(q[$chatId] ?? []), { id: uuidv4(), prompt: userPrompt, files: _files }]
+					[$chatId]: [
+						...(q[$chatId] ?? []),
+						{ id: uuidv4(), prompt: userPrompt, files: _files, taskMode: requestedTaskMode }
+					]
 				}));
 				// Clear input
 				messageInput?.setText('');
@@ -1871,6 +1878,7 @@
 			role: 'user',
 			content: userPrompt,
 			files: _files.length > 0 ? _files : undefined,
+			taskMode: requestedTaskMode,
 			timestamp: Math.floor(Date.now() / 1000), // Unix epoch
 			models: selectedModels
 		};
@@ -1890,7 +1898,10 @@
 
 		saveSessionSelectedModels();
 
-		await sendMessage(history, userMessageId, { newChat: true });
+		await sendMessage(history, userMessageId, {
+			newChat: true,
+			taskMode: requestedTaskMode
+		});
 	};
 
 	const sendMessage = async (
@@ -1900,12 +1911,14 @@
 			messages = null,
 			modelId = null,
 			modelIdx = null,
-			newChat = false
+			newChat = false,
+			taskMode = null
 		}: {
 			messages?: any[] | null;
 			modelId?: string | null;
 			modelIdx?: number | null;
 			newChat?: boolean;
+			taskMode?: string | null;
 		} = {}
 	) => {
 		if (autoScroll) {
@@ -2008,7 +2021,8 @@
 							: createMessagesList(_history, responseMessageId),
 						_history,
 						responseMessageId,
-						_chatId
+						_chatId,
+						taskMode
 					);
 
 					if (chatEventEmitter) clearInterval(chatEventEmitter);
@@ -2071,9 +2085,17 @@
 			.map((token) => decodeURIComponent(JSON.parse(`"${token.replace(/"/g, '\\"')}"`)));
 	};
 
-	const sendMessageSocket = async (model, _messages, _history, responseMessageId, _chatId) => {
+	const sendMessageSocket = async (
+		model,
+		_messages,
+		_history,
+		responseMessageId,
+		_chatId,
+		taskModeOverride = null
+	) => {
 		const responseMessage = _history.messages[responseMessageId];
 		const userMessage = _history.messages[responseMessage.parentId];
+		const effectiveTaskMode = taskModeOverride ?? userMessage?.taskMode ?? 'auto';
 
 		const chatMessageFiles = _messages
 			.filter((message) => message.files)
@@ -2250,6 +2272,7 @@
 					// Direct terminal servers — always included when enabled (not routed through selectedToolIds)
 					...($terminalServers ?? []).filter((t) => !t.id)
 				],
+				task_mode: effectiveTaskMode,
 				features: getFeatures(),
 				variables: {
 					...getPromptVariables(
@@ -2422,6 +2445,7 @@
 			childrenIds: [],
 			role: 'user',
 			content: userPrompt,
+			taskMode,
 			models: selectedModels,
 			timestamp: Math.floor(Date.now() / 1000) // Unix epoch
 		};
@@ -2442,7 +2466,7 @@
 			scrollToBottom();
 		}
 
-		await sendMessage(history, userMessageId);
+		await sendMessage(history, userMessageId, { taskMode });
 	};
 
 	const regenerateResponse = async (message, suggestionPrompt = null) => {
@@ -2852,6 +2876,7 @@
 									bind:selectedFilterIds
 									bind:imageGenerationEnabled
 									bind:codeInterpreterEnabled
+									bind:taskMode
 									{pendingOAuthTools}
 									bind:webSearchEnabled
 									bind:atSelectedModel
@@ -2878,7 +2903,8 @@
 											// Set files and submit
 											files = item.files;
 											await tick();
-											await submitPrompt(item.prompt);
+											taskMode = item.taskMode ?? 'auto';
+											await submitPrompt(item.prompt, { taskMode });
 										}
 									}}
 									onQueueEdit={(id) => {
@@ -2892,6 +2918,7 @@
 											}));
 											// Set files and restore prompt to input
 											files = item.files;
+											taskMode = item.taskMode ?? 'auto';
 											messageInput?.setText(item.prompt);
 										}
 									}}
@@ -2909,10 +2936,16 @@
 									}}
 									on:submit={async (e) => {
 										clearDraft();
-										if (e.detail || files.length > 0) {
+										const submitDetail =
+											typeof e.detail === 'string'
+												? { prompt: e.detail, taskMode }
+												: (e.detail ?? { prompt: '', taskMode });
+										if (submitDetail.prompt || files.length > 0) {
 											await tick();
 
-											submitPrompt(e.detail.replaceAll('\n\n', '\n'));
+											submitPrompt(submitDetail.prompt.replaceAll('\n\n', '\n'), {
+												taskMode: submitDetail.taskMode ?? taskMode
+											});
 										}
 									}}
 								/>
@@ -2937,6 +2970,7 @@
 									bind:imageGenerationEnabled
 									bind:codeInterpreterEnabled
 									bind:webSearchEnabled
+									bind:taskMode
 									bind:atSelectedModel
 									bind:showCommands
 									bind:dragged
@@ -2953,9 +2987,15 @@
 									}}
 									on:submit={async (e) => {
 										clearDraft();
-										if (e.detail || files.length > 0) {
+										const submitDetail =
+											typeof e.detail === 'string'
+												? { prompt: e.detail, taskMode }
+												: (e.detail ?? { prompt: '', taskMode });
+										if (submitDetail.prompt || files.length > 0) {
 											await tick();
-											submitPrompt(e.detail.replaceAll('\n\n', '\n'));
+											submitPrompt(submitDetail.prompt.replaceAll('\n\n', '\n'), {
+												taskMode: submitDetail.taskMode ?? taskMode
+											});
 										}
 									}}
 								/>
