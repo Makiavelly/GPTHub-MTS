@@ -177,7 +177,10 @@
 			<div
 				class="w-48 max-w-[70vw] rounded-3xl border border-gray-200/80 bg-white/92 p-2.5 shadow-2xl backdrop-blur-md dark:border-gray-700/70 dark:bg-gray-900/92"
 			>
-				<div class="flex flex-col gap-1">
+				<div
+					class="quick-nav-scroll flex flex-col gap-1 overflow-y-scroll overscroll-contain pr-1"
+					style="max-height: min(18rem, 55vh);"
+				>
 					{#each userMessages as message}
 						<button
 							type="button"
@@ -222,3 +225,28 @@
 		{/if}
 	</div>
 {/if}
+
+<style>
+	.quick-nav-scroll {
+		scrollbar-width: thin;
+		scrollbar-color: rgba(96, 165, 250, 0.9) rgba(148, 163, 184, 0.12);
+	}
+
+	.quick-nav-scroll::-webkit-scrollbar {
+		width: 6px;
+	}
+
+	.quick-nav-scroll::-webkit-scrollbar-track {
+		background: rgba(148, 163, 184, 0.12);
+		border-radius: 999px;
+	}
+
+	.quick-nav-scroll::-webkit-scrollbar-thumb {
+		background: rgba(96, 165, 250, 0.9);
+		border-radius: 999px;
+	}
+
+	.quick-nav-scroll::-webkit-scrollbar-thumb:hover {
+		background: rgba(59, 130, 246, 1);
+	}
+</style>
