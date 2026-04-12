@@ -37,17 +37,15 @@
 		if (userMessages.length <= COLLAPSED_VISIBLE_COUNT) {
 			collapsedMessages = userMessages;
 		} else {
-			const activeIndex = Math.max(
-				0,
-				userMessages.findIndex((message) => message.id === activeMessageId)
-			);
-			const halfWindow = Math.floor(COLLAPSED_VISIBLE_COUNT / 2);
-			let startIndex = Math.max(0, activeIndex - halfWindow);
-			let endIndex = startIndex + COLLAPSED_VISIBLE_COUNT;
+			const resolvedActiveIndex = userMessages.findIndex((message) => message.id === activeMessageId);
+			const activeIndex = resolvedActiveIndex >= 0 ? resolvedActiveIndex : 0;
+			let startIndex =
+				Math.floor(activeIndex / COLLAPSED_VISIBLE_COUNT) * COLLAPSED_VISIBLE_COUNT;
+			let endIndex = Math.min(startIndex + COLLAPSED_VISIBLE_COUNT, userMessages.length);
 
-			if (endIndex > userMessages.length) {
+			if (endIndex - startIndex < COLLAPSED_VISIBLE_COUNT) {
+				startIndex = Math.max(0, endIndex - COLLAPSED_VISIBLE_COUNT);
 				endIndex = userMessages.length;
-				startIndex = endIndex - COLLAPSED_VISIBLE_COUNT;
 			}
 
 			collapsedMessages = userMessages.slice(startIndex, endIndex);
