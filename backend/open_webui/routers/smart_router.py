@@ -28,13 +28,13 @@ MODEL_REGISTRY = {
 URL_RE = re.compile(r'https?://[^\s\])"\']+')
 
 DECOMPOSE_SYSTEM_PROMPT = """\
-You are a task router. Analyze the user message and output a JSON task list.
+You are a task router. Your ONLY output must be a single JSON object. No explanations, no comments, no markdown, no text before or after the JSON.
 
 Task types:
 - "text" — writing text, answering questions, creating descriptions, posts, articles
 - "reasoning" — math, logic, deep analysis
 - "coding" — writing or fixing code
-- "vlm" — analyzing an attached image
+- "vlm" — analyzing an attached image (ONLY if [Note: the user has attached an image] is present)
 - "image_generation" — creating/drawing/generating a new image, logo, illustration, picture
 - "web_search" — searching the internet for information (when user asks to find/search online)
 - "web_parse" — reading a specific URL from the message to get its content
@@ -43,22 +43,33 @@ IMPORTANT rules:
 - If user asks to generate/draw/create an image/logo → "image_generation"
 - If message contains a URL and user wants to discuss/summarize/analyze it → "web_parse", put the URL in prompt
 - If user asks to search the web/internet → "web_search"
+- Add "vlm" ONLY when [Note: the user has attached an image] appears in the message
 - Split compound requests into multiple tasks
 - For image_generation: write a detailed visual description as the prompt
-- Output ONLY the JSON, nothing else
+- ALL tasks must be inside a single JSON object with a "tasks" array
 
-Output format (JSON only, no extra text, no markdown):
+STRICT output format — one JSON object, nothing else:
 {"tasks":[{"id":0,"type":"TYPE","prompt":"PROMPT","depends_on":[]}]}
 
 Examples:
 User: "generate a logo and write an ad post for a bakery"
-Output: {"tasks":[{"id":0,"type":"image_generation","prompt":"Logo for a bakery, minimalist style, warm colors"},{"id":1,"type":"text","prompt":"Write an ad post for a bakery","depends_on":[]}]}
+{"tasks":[{"id":0,"type":"image_generation","prompt":"Logo for a bakery, minimalist style, warm colors","depends_on":[]},{"id":1,"type":"text","prompt":"Write an ad post for a bakery","depends_on":[]}]}
 
 User: "найди в интернете последние новости про AI"
-Output: {"tasks":[{"id":0,"type":"web_search","prompt":"последние новости про AI 2024","depends_on":[]},{"id":1,"type":"text","prompt":"Summarize the search results about AI news","depends_on":[0]}]}
+{"tasks":[{"id":0,"type":"web_search","prompt":"последние новости про AI 2024","depends_on":[]},{"id":1,"type":"text","prompt":"Summarize the search results about AI news","depends_on":[0]}]}
 
 User: "что написано на этом сайте https://example.com"
-Output: {"tasks":[{"id":0,"type":"web_parse","prompt":"https://example.com","depends_on":[]},{"id":1,"type":"text","prompt":"Summarize the content of the page","depends_on":[0]}]}"""
+{"tasks":[{"id":0,"type":"web_parse","prompt":"https://example.com","depends_on":[]},{"id":1,"type":"text","prompt":"Summarize the content of the page","depends_on":[0]}]}"""
+
+
+_PLAN_SEPARATOR = '\n\n---\n\n'
+
+
+def _strip_plan_header(text: str) -> str:
+    """Remove the '**Задачи:**...---' plan block from assistant messages."""
+    if _PLAN_SEPARATOR in text:
+        return text.split(_PLAN_SEPARATOR, 1)[1].strip()
+    return text
 
 
 def _extract_text(message: dict) -> str:
@@ -69,12 +80,12 @@ def _extract_text(message: dict) -> str:
 
 
 def _has_image(messages: list) -> bool:
-    for msg in messages:
-        if msg.get('role') == 'user':
-            content = msg.get('content', [])
-            if isinstance(content, list) and any(p.get('type') == 'image_url' for p in content):
-                return True
-    return False
+    """Check only the LAST user message for images — not the full history."""
+    last_user = next((m for m in reversed(messages) if m.get('role') == 'user'), None)
+    if not last_user:
+        return False
+    content = last_user.get('content', [])
+    return isinstance(content, list) and any(p.get('type') == 'image_url' for p in content)
 
 
 async def _decompose(user_text: str, has_image: bool, api_key: str) -> list[dict]:
@@ -95,7 +106,8 @@ async def _decompose(user_text: str, has_image: bool, api_key: str) -> list[dict
                 'model': ROUTER_MODEL,
                 'messages': messages,
                 'temperature': 0,
-                'max_tokens': 512,
+                'max_tokens': 1024,
+                'response_format': {'type': 'json_object'},
             },
         ) as resp:
             data = await resp.json()
@@ -110,9 +122,26 @@ async def _decompose(user_text: str, has_image: bool, api_key: str) -> list[dict
     cleaned = re.sub(r'```(?:json)?\s*|\s*```', '', raw).strip()
     # Some models wrap output in <think>...</think> — strip it
     cleaned = re.sub(r'<think>.*?</think>', '', cleaned, flags=re.DOTALL).strip()
-
-    result = json.loads(cleaned)
-    tasks = result.get('tasks', [])
+    # Parse ALL JSON objects in the response and merge their tasks.
+    # The model sometimes outputs multiple {"tasks":[...]} objects instead of one —
+    # we collect every task from every object so nothing is lost.
+    decoder = json.JSONDecoder()
+    tasks: list[dict] = []
+    pos = 0
+    while pos < len(cleaned):
+        start = cleaned.find('{', pos)
+        if start == -1:
+            break
+        try:
+            obj, end = decoder.raw_decode(cleaned, start)
+            if isinstance(obj, dict) and 'tasks' in obj:
+                tasks.extend(obj['tasks'])
+            pos = end
+        except json.JSONDecodeError:
+            pos = start + 1  # skip this '{' and keep scanning
+    if not tasks:
+        log.error(f'[smart_router] no valid tasks found in decomposer response: {raw!r}')
+        raise ValueError('no valid tasks in decomposer response')
 
     log.info(f'[smart_router] parsed tasks: {json.dumps(tasks, ensure_ascii=False, indent=2)}')
     return tasks
@@ -147,6 +176,44 @@ async def _run_chat(messages: list, model: str, api_key: str) -> str:
         ) as resp:
             data = await resp.json()
     return data['choices'][0]['message']['content']
+
+
+_SEARCH_REWRITE_SYSTEM_PROMPT = """\
+You are a search query optimizer. Your only job is to output a concise, effective search engine query.
+
+Rules:
+- Use the conversation history ONLY if it helps clarify what the user means by vague references like "this", "it", "that topic", "about it", etc.
+- If the search intent is already clear from the query alone — ignore the history completely.
+- Output ONLY the search query string. No explanation, no punctuation at the end, no quotes."""
+
+
+async def _rewrite_search_query(raw_query: str, original_messages: list[dict], api_key: str) -> str:
+    """Rewrite a vague search query into a concrete one using full conversation context.
+
+    Uses qwen2.5-72b-instruct with the entire chat history. The original system prompt
+    is replaced with the search-rewrite instruction so the model acts as a query optimizer,
+    not as a general assistant.
+    """
+    model = MODEL_REGISTRY['text']
+
+    # Strip the original system message and substitute our rewrite instruction.
+    # This prevents role confusion (model seeing two conflicting system prompts).
+    non_sys = [m for m in original_messages if m.get('role') != 'system']
+    messages = (
+        [{'role': 'system', 'content': _SEARCH_REWRITE_SYSTEM_PROMPT}]
+        + non_sys
+        + [{'role': 'user', 'content': f'Search intent: {raw_query}'}]
+    )
+
+    log.info(f'[smart_router] rewriting search query via {model}: {raw_query!r}')
+    try:
+        rewritten = await _run_chat(messages, model, api_key)
+        rewritten = rewritten.strip().strip('"\'')
+        log.info(f'[smart_router] rewritten search query: {rewritten!r}')
+        return rewritten or raw_query
+    except Exception as exc:
+        log.warning(f'[smart_router] query rewrite failed: {exc!r}, using original')
+        return raw_query
 
 
 def _web_search_sync(query: str, max_results: int = 5) -> str:
@@ -228,7 +295,8 @@ async def _execute_task(
     log.info(f'[smart_router] task id={task["id"]} final prompt: {prompt!r}')
 
     if task_type == 'web_search':
-        content = await _run_web_search(prompt)
+        search_query = await _rewrite_search_query(prompt, original_messages, api_key)
+        content = await _run_web_search(search_query)
         return {'id': task['id'], 'type': 'text', 'task_type': task_type, 'model': 'DuckDuckGo', 'content': content}
 
     if task_type == 'web_parse':
