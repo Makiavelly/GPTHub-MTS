@@ -1039,6 +1039,7 @@ async def generate_chat_completion(
     # ── Smart Router ──────────────────────────────────────────────────────────
     if model_id == 'auto':
         from open_webui.routers.smart_router import route as _smart_route
+
         # Find the MWS connection by URL instead of assuming it's at index 0
         _mws_key = ''
         _urls = request.app.state.config.OPENAI_API_BASE_URLS
@@ -1052,17 +1053,21 @@ async def generate_chat_completion(
         _routing = await _smart_route(payload, _mws_key)
 
         if _routing['action'] == 'respond':
-            return JSONResponse(content={
-                'id': 'chatcmpl-auto',
-                'object': 'chat.completion',
-                'choices': [{
-                    'index': 0,
-                    'message': {'role': 'assistant', 'content': _routing['content']},
-                    'finish_reason': 'stop',
-                }],
-                'model': 'auto',
-                'usage': None,
-            })
+            return JSONResponse(
+                content={
+                    'id': 'chatcmpl-auto',
+                    'object': 'chat.completion',
+                    'choices': [
+                        {
+                            'index': 0,
+                            'message': {'role': 'assistant', 'content': _routing['content']},
+                            'finish_reason': 'stop',
+                        }
+                    ],
+                    'model': 'auto',
+                    'usage': None,
+                }
+            )
         else:
             # Single task redirect — swap model and continue normal flow
             payload['model'] = _routing['model']
