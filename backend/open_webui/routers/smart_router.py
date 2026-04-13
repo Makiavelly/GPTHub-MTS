@@ -16,13 +16,13 @@ MWS_BASE_URL = 'https://api.gpt.mws.ru/v1'
 
 # Maps task type → actual model ID on MWS (tools use None)
 MODEL_REGISTRY = {
-    'text':             'qwen2.5-72b-instruct',
-    'reasoning':        'QwQ-32B',
-    'coding':           'qwen3-coder-480b-a35b',
-    'vlm':              'qwen2.5-vl',
+    'text': 'qwen2.5-72b-instruct',
+    'reasoning': 'QwQ-32B',
+    'coding': 'qwen3-coder-480b-a35b',
+    'vlm': 'qwen2.5-vl',
     'image_generation': 'qwen-image-lightning',
-    'web_search':       None,  # tool, no LLM model
-    'web_parse':        None,  # tool, no LLM model
+    'web_search': None,  # tool, no LLM model
+    'web_parse': None,  # tool, no LLM model
 }
 
 URL_RE = re.compile(r'https?://[^\s\])"\']+')
@@ -151,12 +151,13 @@ async def _run_chat(messages: list, model: str, api_key: str) -> str:
 
 def _web_search_sync(query: str, max_results: int = 5) -> str:
     from ddgs import DDGS
+
     results = list(DDGS().text(query, max_results=max_results))
     if not results:
         return 'Поиск не дал результатов.'
     lines = []
     for r in results:
-        lines.append(f"**{r.get('title', '')}**\n{r.get('body', '')}\n{r.get('href', '')}")
+        lines.append(f'**{r.get("title", "")}**\n{r.get("body", "")}\n{r.get("href", "")}')
     return '\n\n'.join(lines)
 
 
@@ -198,6 +199,7 @@ def _get_user_memories(user_id: str) -> str:
         return ''
     try:
         from open_webui.models.memories import Memories
+
         memories = Memories.get_memories_by_user_id(user_id)
         if not memories:
             return ''
@@ -258,24 +260,24 @@ async def _execute_task(
 
 
 TASK_LABELS = {
-    'text':             'текст',
-    'reasoning':        'рассуждение',
-    'coding':           'код',
-    'vlm':              'анализ изображения',
+    'text': 'текст',
+    'reasoning': 'рассуждение',
+    'coding': 'код',
+    'vlm': 'анализ изображения',
     'image_generation': 'генерация изображения',
-    'web_search':       'поиск в интернете',
-    'web_parse':        'чтение страницы',
+    'web_search': 'поиск в интернете',
+    'web_parse': 'чтение страницы',
 }
 
 # Human-readable tool/model name shown in the task plan
 TASK_DISPLAY = {
-    'text':             lambda: MODEL_REGISTRY['text'],
-    'reasoning':        lambda: MODEL_REGISTRY['reasoning'],
-    'coding':           lambda: MODEL_REGISTRY['coding'],
-    'vlm':              lambda: MODEL_REGISTRY['vlm'],
+    'text': lambda: MODEL_REGISTRY['text'],
+    'reasoning': lambda: MODEL_REGISTRY['reasoning'],
+    'coding': lambda: MODEL_REGISTRY['coding'],
+    'vlm': lambda: MODEL_REGISTRY['vlm'],
     'image_generation': lambda: MODEL_REGISTRY['image_generation'],
-    'web_search':       lambda: 'DuckDuckGo',
-    'web_parse':        lambda: 'веб-парсер',
+    'web_search': lambda: 'DuckDuckGo',
+    'web_parse': lambda: 'веб-парсер',
 }
 
 # Task types whose output is intermediate (fed into next tasks) — not shown to user directly
@@ -393,7 +395,9 @@ async def stream_route(payload: dict, api_key: str, user_id: str = ''):
                 log.error(f'[smart_router] task {task["id"]} ({task["type"]}) failed: {res}')
                 fallback = f"[Ошибка задачи '{TASK_LABELS.get(task['type'], task['type'])}': {res}]"
                 context[task['id']] = fallback
-                results.append({'id': task['id'], 'type': 'text', 'task_type': task['type'], 'model': '?', 'content': fallback})
+                results.append(
+                    {'id': task['id'], 'type': 'text', 'task_type': task['type'], 'model': '?', 'content': fallback}
+                )
             else:
                 context[res['id']] = res['content']
                 results.append(res)
