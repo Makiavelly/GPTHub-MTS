@@ -702,6 +702,74 @@ async def list_memories(
 
 
 # =============================================================================
+# CHAT HISTORY SEARCH TOOLS
+# =============================================================================
+
+
+async def search_chat_history(
+    query: str,
+    count: int = 5,
+    __chat_id__: str = None,
+    __request__: Request = None,
+    __user__: dict = None,
+) -> str:
+    """
+    Search the current conversation history for relevant messages.
+
+    :param query: The search query to find relevant messages
+    :param count: Number of messages to return (default 5)
+    :return: JSON with matching messages and their timestamps
+    """
+    if __request__ is None or __chat_id__ is None:
+        return json.dumps({'error': 'Request or chat context not available'})
+
+    try:
+        user = UserModel(**__user__) if __user__ else None
+
+        # Generate embedding for the query
+        query_vector = await __request__.app.state.EMBEDDING_FUNCTION(query, user=user)
+
+        # Search in the chat-specific collection
+        collection_name = f'chat-{__chat_id__}'
+        results = VECTOR_DB_CLIENT.search(
+            collection_name=collection_name,
+            vectors=[query_vector],
+            limit=count,
+        )
+
+        if results and hasattr(results, 'documents') and results.documents:
+            messages = []
+            for doc_idx, doc in enumerate(results.documents[0]):
+                msg_id = None
+                if results.ids and results.ids[0]:
+                    msg_id = results.ids[0][doc_idx]
+
+                timestamp = 'Unknown'
+                role = 'unknown'
+                if results.metadatas and doc_idx < len(results.metadatas[0]):
+                    meta = results.metadatas[0][doc_idx]
+                    if meta.get('timestamp'):
+                        timestamp = time.strftime(
+                            '%Y-%m-%d %H:%M:%S',
+                            time.localtime(meta['timestamp']),
+                        )
+                    role = meta.get('role', 'unknown')
+
+                messages.append({
+                    'id': msg_id,
+                    'timestamp': timestamp,
+                    'role': role,
+                    'content': doc,
+                })
+            return json.dumps(messages, ensure_ascii=False)
+        else:
+            return json.dumps([])
+    except Exception as e:
+        log.exception(f'search_chat_history error: {e}')
+        return json.dumps({'error': str(e)})
+
+
+# =============================================================================
 # NOTES TOOLS
 # =============================================================================
 
