@@ -1038,7 +1038,7 @@ async def generate_chat_completion(
 
     # ── Smart Router ──────────────────────────────────────────────────────────
     if model_id == 'auto':
-        from open_webui.routers.smart_router import route as _smart_route
+        from open_webui.routers.smart_router import stream_route as _stream_route
 
         # Find the MWS connection by URL instead of assuming it's at index 0
         _mws_key = ''
@@ -1050,29 +1050,10 @@ async def generate_chat_completion(
                 break
         if not _mws_key:
             _mws_key = _keys[0] if _keys else ''
-        _routing = await _smart_route(payload, _mws_key)
-
-        if _routing['action'] == 'respond':
-            return JSONResponse(
-                content={
-                    'id': 'chatcmpl-auto',
-                    'object': 'chat.completion',
-                    'choices': [
-                        {
-                            'index': 0,
-                            'message': {'role': 'assistant', 'content': _routing['content']},
-                            'finish_reason': 'stop',
-                        }
-                    ],
-                    'model': 'auto',
-                    'usage': None,
-                }
-            )
-        else:
-            # Single task redirect — swap model and continue normal flow
-            payload['model'] = _routing['model']
-            model_id = _routing['model']
-            bypass_filter = True  # already authenticated via 'auto', allow any routed model
+        return StreamingResponse(
+            _stream_route(payload, _mws_key, user_id=user.id),
+            media_type='text/event-stream',
+        )
     # ─────────────────────────────────────────────────────────────────────────
 
     model_info = Models.get_model_by_id(model_id)
