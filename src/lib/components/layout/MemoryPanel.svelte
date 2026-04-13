@@ -38,9 +38,15 @@
 	onMount(loadMemories);
 </script>
 
-<div class="rounded-3xl border border-gray-200 bg-white/80 p-3 backdrop-blur-sm dark:border-gray-800 dark:bg-gray-900/80">
-	<div class="mb-3 flex items-center justify-between border-b border-gray-200 pb-2 dark:border-gray-800">
-		<span class="text-sm font-semibold text-gray-900 dark:text-gray-100">🧠 Долгосрочная память</span>
+<div
+	class="rounded-3xl border border-gray-200 bg-white/80 p-3 backdrop-blur-sm dark:border-gray-800 dark:bg-gray-900/80"
+>
+	<div
+		class="mb-3 flex items-center justify-between border-b border-gray-200 pb-2 dark:border-gray-800"
+	>
+		<span class="text-sm font-semibold text-gray-900 dark:text-gray-100"
+			>🧠 Долгосрочная память</span
+		>
 		<span
 			class="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] text-gray-500 dark:bg-gray-800 dark:text-gray-400"
 		>
@@ -58,7 +64,9 @@
 	{:else}
 		<div class="flex max-h-72 flex-col gap-2 overflow-y-auto pr-1">
 			{#each memories as memory (memory.id)}
-				<div class="rounded-2xl border border-gray-200 bg-gray-50/80 p-3 dark:border-gray-800 dark:bg-gray-850/70">
+				<div
+					class="rounded-2xl border border-gray-200 bg-gray-50/80 p-3 dark:border-gray-800 dark:bg-gray-850/70"
+				>
 					<p class="m-0 text-xs leading-5 text-gray-900 dark:text-gray-100">
 						{memory.content ?? ''}
 					</p>

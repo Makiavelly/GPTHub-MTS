@@ -29,7 +29,6 @@
 	"{{COUNT}}y_time_ago": "",
 	"{{LOCALIZED_DATE}} at {{LOCALIZED_TIME}}": "{{LOCALIZED_DATE}} a las {{LOCALIZED_TIME}}",
 	"{{model}} download has been canceled": "La descarga de {{model}} ha sido cancelada",
-	"{{modelName}} profile image": "imagen de perfíl de {{modelName}}",
 	"{{NAMES}} reacted with {{REACTION}}": "{{NAMES}} han reaccionado con {{REACTION}}",
 	"{{user}}'s Chats": "Chats de {{user}}",
 	"{{webUIName}} Backend Required": "{{webUIName}} Servidor Requerido",

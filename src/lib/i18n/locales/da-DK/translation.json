@@ -28,7 +28,6 @@
 	"{{COUNT}}y_time_ago": "",
 	"{{LOCALIZED_DATE}} at {{LOCALIZED_TIME}}": "{{LOCALIZED_DATE}} klokken {{LOCALIZED_TIME}}",
 	"{{model}} download has been canceled": "Download af {{model}} er blevet annulleret",
-	"{{modelName}} profile image": "",
 	"{{NAMES}} reacted with {{REACTION}}": "{{NAMES}} reagerede med {{REACTION}}",
 	"{{user}}'s Chats": "{{user}}s chats",
 	"{{webUIName}} Backend Required": "{{webUIName}} Backend kræves",

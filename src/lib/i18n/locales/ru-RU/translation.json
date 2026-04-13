@@ -30,7 +30,6 @@
 	"{{COUNT}}y_time_ago": "",
 	"{{LOCALIZED_DATE}} at {{LOCALIZED_TIME}}": "{{LOCALIZED_DATE}} в {{LOCALIZED_TIME}}",
 	"{{model}} download has been canceled": "{{model}} загрузка была отменена",
-	"{{modelName}} profile image": "",
 	"{{NAMES}} reacted with {{REACTION}}": "{{NAMES}} поставили {{REACTION}}",
 	"{{user}}'s Chats": "Чаты {{user}}'а",
 	"{{webUIName}} Backend Required": "Необходимо подключение к серверу {{webUIName}}",

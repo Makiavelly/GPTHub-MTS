@@ -37,10 +37,11 @@
 		if (userMessages.length <= COLLAPSED_VISIBLE_COUNT) {
 			collapsedMessages = userMessages;
 		} else {
-			const resolvedActiveIndex = userMessages.findIndex((message) => message.id === activeMessageId);
+			const resolvedActiveIndex = userMessages.findIndex(
+				(message) => message.id === activeMessageId
+			);
 			const activeIndex = resolvedActiveIndex >= 0 ? resolvedActiveIndex : 0;
-			let startIndex =
-				Math.floor(activeIndex / COLLAPSED_VISIBLE_COUNT) * COLLAPSED_VISIBLE_COUNT;
+			let startIndex = Math.floor(activeIndex / COLLAPSED_VISIBLE_COUNT) * COLLAPSED_VISIBLE_COUNT;
 			let endIndex = Math.min(startIndex + COLLAPSED_VISIBLE_COUNT, userMessages.length);
 
 			if (endIndex - startIndex < COLLAPSED_VISIBLE_COUNT) {
