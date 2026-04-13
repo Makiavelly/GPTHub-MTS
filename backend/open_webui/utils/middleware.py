@@ -58,7 +58,11 @@ from open_webui.routers.pipelines import (
 )
 from open_webui.routers.memories import query_memory, QueryMemoryForm
 from open_webui.utils.memory_extractor import extract_and_store_memories
-from open_webui.utils.chat_summarizer import save_chat_messages_to_vectordb
+from open_webui.utils.chat_summarizer import (
+    save_chat_messages_to_vectordb,
+    maybe_summarize_chat_warm_layer,
+    build_tiered_messages,
+)
 
 from open_webui.utils.webhook import post_webhook
 from open_webui.utils.files import (
@@ -1392,6 +1396,104 @@ async def chat_completion_tools_handler(
     return body, {'sources': sources}
 
 
+async def chat_long_context_handler(
+    request: Request, form_data: dict, extra_params: dict, user
+):
+    """
+    Warm layer gate — called before feature injection (memory, web search, etc.).
+
+    Checks if the chat history exceeds 40% of the model's context window.
+    If yes (or if a warm summary already exists for this chat):
+      - Emits a visible status event so the user sees that compression is running
+      - Runs incremental summarization of the "warm" portion
+      - Replaces form_data['messages'] with [warm_summary_system_msg, ...hot_messages]
+      - Emits a completion event
+
+    The cold layer (ChromaDB) is populated separately, fire-and-forget, after each response.
+    """
+    chat_id = extra_params.get('__chat_id__') or ''
+    model_id = form_data.get('model', '')
+
+    # Only process persisted chats (not temp / local)
+    if not chat_id or chat_id.startswith('local:') or not model_id:
+        return form_data
+
+    messages = form_data.get('messages', [])
+    if not messages:
+        return form_data
+
+    # Separate system prompt so it isn't counted toward the hot/warm split
+    system_msgs = [m for m in messages if m.get('role') == 'system']
+    non_system  = [m for m in messages if m.get('role') != 'system']
+
+    event_emitter = extra_params.get('__event_emitter__')
+
+    try:
+        # Check upfront whether summarization will actually be needed,
+        # so we only show the status indicator when work is actually being done.
+        from open_webui.utils.token_counter import should_summarize
+        from open_webui.models.chats import Chats
+
+        needs_work = should_summarize(non_system, model_id, threshold=0.4)
+        existing_summary, _ = Chats.get_warm_summary(chat_id)
+        will_run = needs_work or bool(existing_summary)
+
+        if will_run and event_emitter:
+            await event_emitter({
+                'type': 'status',
+                'data': {
+                    'action': 'context_compression',
+                    'description': 'Compressing conversation history…',
+                    'done': False,
+                },
+            })
+
+        hot_messages, warm_summary = await maybe_summarize_chat_warm_layer(
+            chat_id=chat_id,
+            user=user,
+            model_id=model_id,
+            messages=non_system,
+            request=request,
+        )
+    except Exception as e:
+        log.debug(f'chat_long_context_handler error: {e}')
+        return form_data
+
+    if warm_summary is None:
+        # No compression applied — pass through unchanged (no status event needed)
+        return form_data
+
+    # Compression ran — tell the user what happened
+    hot_count = len(hot_messages)
+    total_non_sys = len(non_system)
+    archived = max(0, total_non_sys - hot_count)
+
+    if event_emitter:
+        await event_emitter({
+            'type': 'status',
+            'data': {
+                'action': 'context_compression',
+                'description': (
+                    f'History compressed — {archived} message{"s" if archived != 1 else ""} '
+                    f'archived, last {hot_count} kept in context'
+                ),
+                'done': True,
+            },
+        })
+
+    # Rebuild: system messages first, then [warm summary system msg], then hot messages
+    form_data['messages'] = build_tiered_messages(
+        hot_messages=hot_messages,
+        warm_summary=warm_summary,
+        system_prompt=None,   # existing system msgs are prepended below
+    )
+    # Re-inject original system messages at the very front
+    if system_msgs:
+        form_data['messages'] = system_msgs + form_data['messages']
+
+    return form_data
+
+
 async def chat_memory_handler(request: Request, form_data: dict, extra_params: dict, user):
     from open_webui.utils.memory_extractor import get_tiered_context
 
@@ -2305,6 +2407,12 @@ async def process_chat_payload(request, form_data, user, metadata, model):
 
     features = form_data.pop('features', None) or {}
     extra_params['__features__'] = features
+
+    # Long Context — warm layer compression.
+    # Runs unconditionally so that chats that were previously compressed continue
+    # to use the warm summary even when the feature toggle is off.
+    form_data = await chat_long_context_handler(request, form_data, extra_params, user)
+
     if features:
         if 'voice' in features and features['voice']:
             if request.app.state.config.VOICE_MODE_PROMPT_TEMPLATE != None:
