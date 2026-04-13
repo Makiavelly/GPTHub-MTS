@@ -28,7 +28,6 @@
 	"{{COUNT}}y_time_ago": "",
 	"{{LOCALIZED_DATE}} at {{LOCALIZED_TIME}}": "{{LOCALIZED_DATE}} در {{LOCALIZED_TIME}}",
 	"{{model}} download has been canceled": "دانلود {{model}} لغو شده است",
-	"{{modelName}} profile image": "",
 	"{{NAMES}} reacted with {{REACTION}}": "",
 	"{{user}}'s Chats": "{{user}} گفتگوهای",
 	"{{webUIName}} Backend Required": "بکند {{webUIName}} نیاز است.",

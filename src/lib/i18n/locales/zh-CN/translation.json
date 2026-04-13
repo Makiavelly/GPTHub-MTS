@@ -27,7 +27,6 @@
 	"{{COUNT}}y_time_ago": "{{COUNT}}年前",
 	"{{LOCALIZED_DATE}} at {{LOCALIZED_TIME}}": "{{LOCALIZED_DATE}} {{LOCALIZED_TIME}}",
 	"{{model}} download has been canceled": "已取消模型 {{model}} 的下载",
-	"{{modelName}} profile image": "模型 “{{modelName}}” 的头像",
 	"{{NAMES}} reacted with {{REACTION}}": "{{NAMES}} 给了 {{REACTION}}",
 	"{{user}}'s Chats": "{{user}} 的对话记录",
 	"{{webUIName}} Backend Required": "{{webUIName}} 需要后端服务",

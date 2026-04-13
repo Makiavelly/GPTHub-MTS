@@ -100,7 +100,9 @@
 	}}
 >
 	<div class="flex min-w-0 flex-1 items-start gap-3">
-		<div class="flex size-10 shrink-0 items-center justify-center rounded-2xl bg-gray-100 text-xl dark:bg-gray-800">
+		<div
+			class="flex size-10 shrink-0 items-center justify-center rounded-2xl bg-gray-100 text-xl dark:bg-gray-800"
+		>
 			<span aria-hidden="true">{itemCardInfo.icon}</span>
 		</div>
 
@@ -119,7 +121,9 @@
 
 			<div class="mt-2 flex flex-wrap items-center gap-2 text-[10px]">
 				{#if itemCardInfo.tag}
-					<span class="rounded-full bg-gray-100 px-2 py-0.5 text-gray-500 dark:bg-gray-800 dark:text-gray-400">
+					<span
+						class="rounded-full bg-gray-100 px-2 py-0.5 text-gray-500 dark:bg-gray-800 dark:text-gray-400"
+					>
 						{itemCardInfo.tag}
 					</span>
 				{/if}
