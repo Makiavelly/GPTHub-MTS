@@ -58,6 +58,7 @@ from open_webui.routers.pipelines import (
 )
 from open_webui.routers.memories import query_memory, QueryMemoryForm
 from open_webui.utils.memory_extractor import extract_and_store_memories
+from open_webui.utils.chat_summarizer import save_chat_messages_to_vectordb
 
 from open_webui.utils.webhook import post_webhook
 from open_webui.utils.files import (
@@ -3039,6 +3040,12 @@ async def background_tasks_handler(ctx):
             asyncio.create_task(
                 extract_and_store_memories(request, messages, model_id, user)
             )
+
+    # Save chat messages to ChromaDB for vector search (cold layer)
+    if metadata.get('chat_id') and metadata.get('chat_id') != 'local':
+        asyncio.create_task(
+            save_chat_messages_to_vectordb(metadata['chat_id'], user, messages, request)
+        )
 
 
 async def non_streaming_chat_response_handler(response, ctx):

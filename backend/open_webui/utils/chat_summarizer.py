@@ -7,6 +7,8 @@ Keeps hot layer (recent messages) fresh and cold layer available for search.
 
 import json
 import logging
+import time
+import asyncio
 from typing import Optional, List, Tuple
 
 from open_webui.utils.token_counter import (
@@ -15,6 +17,7 @@ from open_webui.utils.token_counter import (
     should_summarize,
 )
 from open_webui.utils.chat import generate_chat_completion
+from open_webui.retrieval.vector.factory import VECTOR_DB_CLIENT
 
 log = logging.getLogger(__name__)
 
@@ -245,3 +248,82 @@ def build_tiered_messages(
     result.extend(hot_messages)
 
     return result
+
+
+async def save_chat_messages_to_vectordb(
+    chat_id: str,
+    user,
+    messages: List[dict],
+    request=None,
+) -> None:
+    """
+    Save chat messages to ChromaDB for vector search.
+
+    Args:
+        chat_id: ID of the chat
+        user: User object
+        messages: List of messages to save
+        request: FastAPI request (needed for embedding function)
+    """
+    if not request or not chat_id or not messages:
+        return
+
+    try:
+        # Filter to only user and assistant messages
+        msgs_to_save = [m for m in messages if m.get('role') in ('user', 'assistant')]
+        if not msgs_to_save:
+            return
+
+        collection_name = f'chat-{chat_id}'
+
+        # Generate embeddings for each message
+        items = []
+        current_time = int(time.time())
+
+        for msg_idx, msg in enumerate(msgs_to_save):
+            content = msg.get('content', '')
+
+            # Handle multi modal content
+            if isinstance(content, list):
+                content_text = ""
+                for item in content:
+                    if isinstance(item, dict) and item.get('type') == 'text':
+                        content_text += item.get('text', '') + " "
+                content = content_text.strip()
+            elif not isinstance(content, str):
+                content = str(content)
+
+            if not content:
+                continue
+
+            try:
+                # Generate embedding
+                vector = await request.app.state.EMBEDDING_FUNCTION(content, user=user)
+
+                items.append({
+                    'id': f"{chat_id}-{msg_idx}-{current_time}",
+                    'text': content,
+                    'vector': vector,
+                    'metadata': {
+                        'role': msg.get('role'),
+                        'timestamp': current_time,
+                        'message_index': msg_idx,
+                    }
+                })
+            except Exception as e:
+                log.debug(f"Failed to embed message {msg_idx}: {e}")
+                continue
+
+        # Upsert to ChromaDB
+        if items:
+            try:
+                VECTOR_DB_CLIENT.upsert(
+                    collection_name=collection_name,
+                    items=items,
+                )
+                log.debug(f"Saved {len(items)} messages to chat-{chat_id} collection")
+            except Exception as e:
+                log.debug(f"Failed to save messages to ChromaDB: {e}")
+
+    except Exception as e:
+        log.debug(f"save_chat_messages_to_vectordb error: {e}")
