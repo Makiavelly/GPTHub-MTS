@@ -41,6 +41,16 @@ MODEL_CONTEXT_WINDOWS = {
     'mistral-7b': 8_192,
     'mistral-large': 32_000,
 
+    # Qwen / MWS models
+    'qwen2.5-72b-instruct': 128_000,
+    'qwen2.5-vl': 128_000,
+    'qwen3-coder-480b-a35b': 128_000,
+    'qwq-32b': 131_072,
+    'mws-gpt-alpha': 128_000,
+
+    # Auto-router: uses the same 128K pool as the underlying MWS models
+    'auto': 128_000,
+
     # Open source / defaults
     'default': 4_096,
     'large': 16_384,
@@ -152,14 +162,14 @@ def get_model_context_limit(model_id: str) -> int:
     Returns:
         Context window size in tokens
     """
-    # Exact match
-    if model_id in MODEL_CONTEXT_WINDOWS:
-        return MODEL_CONTEXT_WINDOWS[model_id]
+    # Exact match (case-insensitive)
+    model_lower = model_id.lower()
+    if model_lower in MODEL_CONTEXT_WINDOWS:
+        return MODEL_CONTEXT_WINDOWS[model_lower]
 
     # Substring matching (case-insensitive)
-    model_lower = model_id.lower()
     for key, value in MODEL_CONTEXT_WINDOWS.items():
-        if key in model_lower and key != 'default':
+        if key not in ('default', 'large', 'xlarge') and key in model_lower:
             return value
 
     # Fallback to default

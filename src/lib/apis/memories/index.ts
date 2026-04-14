@@ -156,7 +156,8 @@ export const deleteMemoryById = async (token: string, id: string) => {
 export const extractMemoriesFromMessages = async (
 	token: string,
 	messages: object[],
-	model: string
+	model: string,
+	fullScan: boolean = false
 ) => {
 	let error = null;
 
@@ -167,7 +168,7 @@ export const extractMemoriesFromMessages = async (
 			'Content-Type': 'application/json',
 			authorization: `Bearer ${token}`
 		},
-		body: JSON.stringify({ messages, model })
+		body: JSON.stringify({ messages, model, full_scan: fullScan })
 	})
 		.then(async (res) => {
 			if (!res.ok) throw await res.json();
@@ -191,6 +192,34 @@ export const getMemoryProfile = async (token: string) => {
 
 	const res = await fetch(`${WEBUI_API_BASE_URL}/memories/profile`, {
 		method: 'GET',
+		headers: {
+			Accept: 'application/json',
+			'Content-Type': 'application/json',
+			authorization: `Bearer ${token}`
+		}
+	})
+		.then(async (res) => {
+			if (!res.ok) throw await res.json();
+			return res.json();
+		})
+		.catch((err) => {
+			error = err.detail;
+			console.error(err);
+			return null;
+		});
+
+	if (error) {
+		throw error;
+	}
+
+	return res;
+};
+
+export const indexChatHistory = async (token: string) => {
+	let error = null;
+
+	const res = await fetch(`${WEBUI_API_BASE_URL}/memories/index-chat-history`, {
+		method: 'POST',
 		headers: {
 			Accept: 'application/json',
 			'Content-Type': 'application/json',

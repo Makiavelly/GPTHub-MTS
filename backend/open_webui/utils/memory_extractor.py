@@ -252,8 +252,11 @@ async def _find_similar(request, user_id: str, fact: str, user) -> Optional[Memo
             and hasattr(results, "distances")
             and results.distances
             and results.distances[0]
+            and len(results.distances[0]) > 0
             and results.distances[0][0] < SIMILARITY_THRESHOLD
-            and results.ids and results.ids[0]
+            and results.ids
+            and results.ids[0]
+            and len(results.ids[0]) > 0
         ):
             return Memories.get_memory_by_id(results.ids[0][0])
     except Exception as e:
@@ -270,7 +273,8 @@ def _compute_importance(memory: MemoryModel) -> float:
     """
     scope_w = SCOPE_WEIGHTS.get(memory.scope, 0.5)
 
-    age_days = (time.time() - (memory.updated_at or memory.created_at)) / 86400
+    ts = memory.updated_at or memory.created_at or int(time.time())
+    age_days = (time.time() - ts) / 86400
     # personal/work decay very slowly; general decays faster
     half_life = DECAY_HALF_LIFE_DAYS * (2.0 if scope_w >= 0.9 else 1.0)
     recency = math.exp(-0.693 * age_days / half_life)  # 0.693 = ln(2)
@@ -336,7 +340,7 @@ async def _maybe_regenerate_profile(request, model_id: str, user, source_date: i
         profile = MemoryProfiles.get_profile(user.id)
         last_count = profile.fact_count_at_generation if profile else 0
 
-        if total - last_count < PROFILE_REGEN_INTERVAL and profile:
+        if profile and total - last_count < PROFILE_REGEN_INTERVAL:
             return  # Not enough new facts to justify regeneration
 
         all_memories = Memories.get_memories_by_user_id(user.id)

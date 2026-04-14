@@ -153,7 +153,7 @@ class MemoriesTable:
                 memories = db.query(Memory).all()
                 return [MemoryModel.model_validate(memory) for memory in memories]
             except Exception:
-                return None
+                return []
 
     def get_memories_by_user_id(self, user_id: str, db: Optional[Session] = None) -> list[MemoryModel]:
         with get_db_context(db) as db:
@@ -161,7 +161,7 @@ class MemoriesTable:
                 memories = db.query(Memory).filter_by(user_id=user_id).all()
                 return [MemoryModel.model_validate(memory) for memory in memories]
             except Exception:
-                return None
+                return []
 
     def get_memory_by_id(self, id: str, db: Optional[Session] = None) -> Optional[MemoryModel]:
         with get_db_context(db) as db:

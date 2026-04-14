@@ -3145,9 +3145,21 @@ async def background_tasks_handler(ctx):
     ):
         model_id = message.get('model', form_data.get('model', ''))
         if model_id:
-            asyncio.create_task(
-                extract_and_store_memories(request, messages, model_id, user)
-            )
+            if not hasattr(request.app.state, '_memory_locks'):
+                request.app.state._memory_locks = {}
+            user_id = user.id
+            if user_id not in request.app.state._memory_locks:
+                request.app.state._memory_locks[user_id] = asyncio.Lock()
+            _mem_lock = request.app.state._memory_locks[user_id]
+
+            async def _safe_extract_memories(_lock=_mem_lock, _model=model_id):
+                if _lock.locked():
+                    log.debug(f'memory: skipping extraction for {user_id} — previous still running')
+                    return
+                async with _lock:
+                    await extract_and_store_memories(request, messages, _model, user)
+
+            asyncio.create_task(_safe_extract_memories())
 
     # Save chat messages to ChromaDB for vector search (cold layer)
     if metadata.get('chat_id') and metadata.get('chat_id') != 'local':
