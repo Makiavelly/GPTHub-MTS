@@ -6,6 +6,14 @@ import uuid
 import html
 import base64
 from functools import lru_cache
+
+try:
+    import static_ffmpeg
+
+    static_ffmpeg.add_paths()  # adds bundled ffmpeg/ffprobe to PATH if not already present
+except Exception:
+    pass  # static-ffmpeg not installed — rely on system ffmpeg
+
 from pydub import AudioSegment
 from pydub.silence import split_on_silence
 from concurrent.futures import ThreadPoolExecutor

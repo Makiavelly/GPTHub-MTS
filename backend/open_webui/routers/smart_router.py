@@ -28,13 +28,13 @@ MODEL_REGISTRY = {
 URL_RE = re.compile(r'https?://[^\s\])"\']+')
 
 DECOMPOSE_SYSTEM_PROMPT = """\
-You are a task router. Analyze the user message and output a JSON task list.
+You are a task router. Your ONLY output must be a single JSON object. No explanations, no comments, no markdown, no text before or after the JSON.
 
 Task types:
 - "text" — writing text, answering questions, creating descriptions, posts, articles
 - "reasoning" — math, logic, deep analysis
 - "coding" — writing or fixing code
-- "vlm" — analyzing an attached image
+- "vlm" — analyzing an attached image (ONLY if [Note: the user has attached an image] is present)
 - "image_generation" — creating/drawing/generating a new image, logo, illustration, picture
 - "web_search" — searching the internet for information (when user asks to find/search online)
 - "web_parse" — reading a specific URL from the message to get its content
@@ -43,22 +43,67 @@ IMPORTANT rules:
 - If user asks to generate/draw/create an image/logo → "image_generation"
 - If message contains a URL and user wants to discuss/summarize/analyze it → "web_parse", put the URL in prompt
 - If user asks to search the web/internet → "web_search"
+- Add "vlm" ONLY when [Note: the user has attached an image] appears in the message
 - Split compound requests into multiple tasks
 - For image_generation: write a detailed visual description as the prompt
-- Output ONLY the JSON, nothing else
+- ALL tasks must be inside a single JSON object with a "tasks" array
 
-Output format (JSON only, no extra text, no markdown):
+STRICT output format — one JSON object, nothing else:
 {"tasks":[{"id":0,"type":"TYPE","prompt":"PROMPT","depends_on":[]}]}
 
 Examples:
 User: "generate a logo and write an ad post for a bakery"
-Output: {"tasks":[{"id":0,"type":"image_generation","prompt":"Logo for a bakery, minimalist style, warm colors"},{"id":1,"type":"text","prompt":"Write an ad post for a bakery","depends_on":[]}]}
+{"tasks":[{"id":0,"type":"image_generation","prompt":"Logo for a bakery, minimalist style, warm colors","depends_on":[]},{"id":1,"type":"text","prompt":"Write an ad post for a bakery","depends_on":[]}]}
 
 User: "найди в интернете последние новости про AI"
-Output: {"tasks":[{"id":0,"type":"web_search","prompt":"последние новости про AI 2024","depends_on":[]},{"id":1,"type":"text","prompt":"Summarize the search results about AI news","depends_on":[0]}]}
+{"tasks":[{"id":0,"type":"web_search","prompt":"последние новости про AI 2024","depends_on":[]},{"id":1,"type":"text","prompt":"Summarize the search results about AI news","depends_on":[0]}]}
 
 User: "что написано на этом сайте https://example.com"
-Output: {"tasks":[{"id":0,"type":"web_parse","prompt":"https://example.com","depends_on":[]},{"id":1,"type":"text","prompt":"Summarize the content of the page","depends_on":[0]}]}"""
+{"tasks":[{"id":0,"type":"web_parse","prompt":"https://example.com","depends_on":[]},{"id":1,"type":"text","prompt":"Summarize the content of the page","depends_on":[0]}]}"""
+
+
+_PLAN_SEPARATOR = '\n\n---\n\n'
+_RAG_CONTEXT_RE = re.compile(r'<context>.*?</context>', re.DOTALL)
+# Matches the '### Task:\n...\n\n' preamble injected by OpenWebUI's RAG template
+_RAG_PREAMBLE_RE = re.compile(r'^###\s*Task:.*?(?=\n\n|\Z)', re.DOTALL)
+
+
+def _strip_plan_header(text: str) -> str:
+    """Remove the '**Задачи:**...---' plan block from assistant messages."""
+    if _PLAN_SEPARATOR in text:
+        return text.split(_PLAN_SEPARATOR, 1)[1].strip()
+    return text
+
+
+def _decompose_text(user_text: str) -> str:
+    """Extract clean user intent for the decomposer.
+
+    OpenWebUI's RAG pipeline prepends the full RAG template (### Task: / ### Guidelines:
+    / ### Output: / <context>...</context>) BEFORE the user's original message.
+    The user's actual query is always the last non-template paragraph.
+
+    Strips:
+    - '<context>...</context>' blocks
+    - '<attached_files>...</attached_files>' tags
+    - All '### Section:' template sections (everything before the last paragraph)
+
+    Execution models receive the full context via original_messages.
+    """
+    text = _RAG_CONTEXT_RE.sub('', user_text)
+    text = re.sub(r'<attached_files>.*?</attached_files>', '', text, flags=re.DOTALL)
+
+    # If the message was injected with a RAG preamble, the user's query sits at
+    # the very bottom. Split into paragraphs and take the last non-### one.
+    if re.match(r'^\s*###\s*Task:', user_text):
+        paragraphs = [p.strip() for p in text.split('\n\n') if p.strip()]
+        non_template = [p for p in paragraphs if not p.startswith('###')]
+        if non_template:
+            return non_template[-1]
+        if paragraphs:
+            return paragraphs[-1]
+        return ''
+
+    return text.strip()
 
 
 def _extract_text(message: dict) -> str:
@@ -69,12 +114,12 @@ def _extract_text(message: dict) -> str:
 
 
 def _has_image(messages: list) -> bool:
-    for msg in messages:
-        if msg.get('role') == 'user':
-            content = msg.get('content', [])
-            if isinstance(content, list) and any(p.get('type') == 'image_url' for p in content):
-                return True
-    return False
+    """Check only the LAST user message for images — not the full history."""
+    last_user = next((m for m in reversed(messages) if m.get('role') == 'user'), None)
+    if not last_user:
+        return False
+    content = last_user.get('content', [])
+    return isinstance(content, list) and any(p.get('type') == 'image_url' for p in content)
 
 
 async def _decompose(user_text: str, has_image: bool, api_key: str) -> list[dict]:
@@ -95,7 +140,8 @@ async def _decompose(user_text: str, has_image: bool, api_key: str) -> list[dict
                 'model': ROUTER_MODEL,
                 'messages': messages,
                 'temperature': 0,
-                'max_tokens': 512,
+                'max_tokens': 1024,
+                'response_format': {'type': 'json_object'},
             },
         ) as resp:
             data = await resp.json()
@@ -110,9 +156,26 @@ async def _decompose(user_text: str, has_image: bool, api_key: str) -> list[dict
     cleaned = re.sub(r'```(?:json)?\s*|\s*```', '', raw).strip()
     # Some models wrap output in <think>...</think> — strip it
     cleaned = re.sub(r'<think>.*?</think>', '', cleaned, flags=re.DOTALL).strip()
-
-    result = json.loads(cleaned)
-    tasks = result.get('tasks', [])
+    # Parse ALL JSON objects in the response and merge their tasks.
+    # The model sometimes outputs multiple {"tasks":[...]} objects instead of one —
+    # we collect every task from every object so nothing is lost.
+    decoder = json.JSONDecoder()
+    tasks: list[dict] = []
+    pos = 0
+    while pos < len(cleaned):
+        start = cleaned.find('{', pos)
+        if start == -1:
+            break
+        try:
+            obj, end = decoder.raw_decode(cleaned, start)
+            if isinstance(obj, dict) and 'tasks' in obj:
+                tasks.extend(obj['tasks'])
+            pos = end
+        except json.JSONDecodeError:
+            pos = start + 1  # skip this '{' and keep scanning
+    if not tasks:
+        log.error(f'[smart_router] no valid tasks found in decomposer response: {raw!r}')
+        raise ValueError('no valid tasks in decomposer response')
 
     log.info(f'[smart_router] parsed tasks: {json.dumps(tasks, ensure_ascii=False, indent=2)}')
     return tasks
@@ -147,6 +210,44 @@ async def _run_chat(messages: list, model: str, api_key: str) -> str:
         ) as resp:
             data = await resp.json()
     return data['choices'][0]['message']['content']
+
+
+_SEARCH_REWRITE_SYSTEM_PROMPT = """\
+You are a search query optimizer. Your only job is to output a concise, effective search engine query.
+
+Rules:
+- Use the conversation history ONLY if it helps clarify what the user means by vague references like "this", "it", "that topic", "about it", etc.
+- If the search intent is already clear from the query alone — ignore the history completely.
+- Output ONLY the search query string. No explanation, no punctuation at the end, no quotes."""
+
+
+async def _rewrite_search_query(raw_query: str, original_messages: list[dict], api_key: str) -> str:
+    """Rewrite a vague search query into a concrete one using full conversation context.
+
+    Uses qwen2.5-72b-instruct with the entire chat history. The original system prompt
+    is replaced with the search-rewrite instruction so the model acts as a query optimizer,
+    not as a general assistant.
+    """
+    model = MODEL_REGISTRY['text']
+
+    # Strip the original system message and substitute our rewrite instruction.
+    # This prevents role confusion (model seeing two conflicting system prompts).
+    non_sys = [m for m in original_messages if m.get('role') != 'system']
+    messages = (
+        [{'role': 'system', 'content': _SEARCH_REWRITE_SYSTEM_PROMPT}]
+        + non_sys
+        + [{'role': 'user', 'content': f'Search intent: {raw_query}'}]
+    )
+
+    log.info(f'[smart_router] rewriting search query via {model}: {raw_query!r}')
+    try:
+        rewritten = await _run_chat(messages, model, api_key)
+        rewritten = rewritten.strip().strip('"\'')
+        log.info(f'[smart_router] rewritten search query: {rewritten!r}')
+        return rewritten or raw_query
+    except Exception as exc:
+        log.warning(f'[smart_router] query rewrite failed: {exc!r}, using original')
+        return raw_query
 
 
 def _web_search_sync(query: str, max_results: int = 5) -> str:
@@ -228,7 +329,8 @@ async def _execute_task(
     log.info(f'[smart_router] task id={task["id"]} final prompt: {prompt!r}')
 
     if task_type == 'web_search':
-        content = await _run_web_search(prompt)
+        search_query = await _rewrite_search_query(prompt, original_messages, api_key)
+        content = await _run_web_search(search_query)
         return {'id': task['id'], 'type': 'text', 'task_type': task_type, 'model': 'DuckDuckGo', 'content': content}
 
     if task_type == 'web_parse':
@@ -240,21 +342,31 @@ async def _execute_task(
         return {'id': task['id'], 'type': 'image', 'task_type': task_type, 'model': model, 'content': content}
 
     # For all chat-based tasks (text / reasoning / coding / vlm)
-    # Use conversation history up to (not including) the last user message
-    history = [m for m in original_messages if m.get('role') in ('system', 'assistant')]
-    user_msg: dict = {'role': 'user', 'content': prompt}
+    has_deps = bool(task.get('depends_on', []))
 
-    # For vlm: carry the image parts from the original user message
-    if task_type == 'vlm':
-        last_user = next((m for m in reversed(original_messages) if m.get('role') == 'user'), None)
-        if last_user:
-            orig_content = last_user.get('content', [])
-            if isinstance(orig_content, list):
-                image_parts = [p for p in orig_content if p.get('type') == 'image_url']
-                if image_parts:
-                    user_msg['content'] = [{'type': 'text', 'text': prompt}] + image_parts
+    if not has_deps and task_type != 'vlm':
+        # No upstream dependencies — the original messages already contain full
+        # context (RAG blocks, file transcriptions, conversation history).
+        # Pass them as-is so the model sees everything OpenWebUI injected.
+        messages = list(original_messages)
+    else:
+        # Task depends on other tasks (e.g. text summarising web_search output),
+        # or is a vlm task that needs image parts explicitly attached.
+        history = [m for m in original_messages if m.get('role') in ('system', 'assistant')]
+        user_msg: dict = {'role': 'user', 'content': prompt}
 
-    messages = history + [user_msg]
+        # For vlm: carry the image parts from the original user message
+        if task_type == 'vlm':
+            last_user = next((m for m in reversed(original_messages) if m.get('role') == 'user'), None)
+            if last_user:
+                orig_content = last_user.get('content', [])
+                if isinstance(orig_content, list):
+                    image_parts = [p for p in orig_content if p.get('type') == 'image_url']
+                    if image_parts:
+                        user_msg['content'] = [{'type': 'text', 'text': prompt}] + image_parts
+
+        messages = history + [user_msg]
+
     content = await _run_chat(messages, model, api_key)
     return {'id': task['id'], 'type': 'text', 'task_type': task_type, 'model': model, 'content': content}
 
@@ -297,7 +409,12 @@ def _plan_lines(tasks: list) -> list[str]:
         # Mark intermediate tasks visually
         intermediate = t['id'] in dep_ids and t['type'] in INTERMEDIATE_TYPES
         prefix = '  ' if intermediate else ''
-        lines.append(f'{prefix}- `{display}` — {label}{dep_str}\n')
+        # For web_search: show the query-rewriting step as a preceding sub-task
+        if t['type'] == 'web_search':
+            lines.append(f'  - `{MODEL_REGISTRY["text"]}` — формирование поискового запроса\n')
+            lines.append(f'{prefix}- `{display}` — {label} | на основе: формирование запроса{dep_str}\n')
+        else:
+            lines.append(f'{prefix}- `{display}` — {label}{dep_str}\n')
     lines.append('\n---\n\n')
     return lines
 
@@ -329,6 +446,11 @@ async def stream_route(payload: dict, api_key: str, user_id: str = ''):
     """
     api_key = api_key.removeprefix('Bearer ').strip()
     log.info(f'[smart_router] api_key preview: {api_key[:8]!r}... (len={len(api_key)})')
+    log.info(f'[smart_router] payload keys: {list(payload.keys())}')
+    # Log non-messages payload fields (files, metadata, etc.)
+    for k, v in payload.items():
+        if k != 'messages':
+            log.info(f'[smart_router] payload[{k!r}]: {str(v)[:300]!r}')
 
     messages = list(payload.get('messages', []))
 
@@ -348,8 +470,23 @@ async def stream_route(payload: dict, api_key: str, user_id: str = ''):
     last_user = next((m for m in reversed(messages) if m.get('role') == 'user'), None)
     user_text = _extract_text(last_user) if last_user else ''
 
-    # Internal OpenWebUI system tasks (title gen, follow-ups, tags) — route directly
-    if user_text.startswith('### Task:'):
+    # Debug: log all messages to diagnose empty user_text cases
+    log.info(f'[smart_router] total messages: {len(messages)}, roles: {[m.get("role") for m in messages]}')
+    for mi, msg in enumerate(messages):
+        role = msg.get('role', '?')
+        content = msg.get('content', '')
+        if isinstance(content, list):
+            log.info(f'[smart_router] msg[{mi}] role={role} list-parts: {[p.get("type") for p in content]}')
+            for pi, part in enumerate(content):
+                if part.get('type') == 'text':
+                    log.info(f'[smart_router] msg[{mi}] part[{pi}] text first 400: {part.get("text", "")[:400]!r}')
+        else:
+            log.info(f'[smart_router] msg[{mi}] role={role} str first 400: {str(content)[:400]!r}')
+
+    # Internal OpenWebUI system tasks (title gen, follow-ups, tags) — route directly.
+    # RAG-injected messages also start with '### Task:' (from DEFAULT_RAG_TEMPLATE)
+    # but they contain a <context> block — those must go through decomposition.
+    if user_text.startswith('### Task:') and '<context>' not in user_text:
         log.debug('[smart_router] internal system task, skipping routing')
         model = MODEL_REGISTRY['text']
         content = await _run_chat(messages, model, api_key)
@@ -357,15 +494,30 @@ async def stream_route(payload: dict, api_key: str, user_id: str = ''):
         yield _sse_done()
         return
 
+    # Strip RAG preamble/context from user_text before decomposition.
+    # The decomposer only needs the clean user intent ("о чём аудиофайл"),
+    # not the injected ### Task: header or <context> blocks.
+    # Execution models receive the full context via original_messages.
+    clean_text = _decompose_text(user_text)
+
+    # If the user sent only a file without any text, clean_text will be empty.
+    # Use a sensible default so the decomposer doesn't hallucinate,
+    # and the execution model (which receives full original_messages with the
+    # transcription/file context) knows to describe the attached content.
+    if not clean_text and '<context>' in user_text:
+        clean_text = 'Проанализируй и опиши содержимое прикреплённого файла'
+
+    log.info(f'[smart_router] clean decompose text: {clean_text!r}')
+
     # Decompose
     try:
-        tasks = await _decompose(user_text, has_image, api_key)
+        tasks = await _decompose(clean_text or user_text, has_image, api_key)
     except Exception as exc:
         log.error(f'[smart_router] decompose FAILED: {exc!r}, falling back to text')
         tasks = []
 
     if not tasks:
-        tasks = [{'id': 0, 'type': 'text', 'prompt': user_text, 'depends_on': []}]
+        tasks = [{'id': 0, 'type': 'text', 'prompt': clean_text or user_text, 'depends_on': []}]
 
     log.info(f'[smart_router] task plan: {[t["type"] for t in tasks]}')
 
@@ -404,9 +556,14 @@ async def stream_route(payload: dict, api_key: str, user_id: str = ''):
 
         remaining = [t for t in remaining if t not in ready]
 
-    # Show only leaf results — tasks whose output is not consumed by other tasks
+    # Show leaf results (not consumed by other tasks) + always show image_generation
+    # results even if another task depends on them — the user always expects to see
+    # the generated image regardless of whether a follow-up text task references it.
     dep_ids = {d for t in tasks for d in t.get('depends_on', [])}
-    leaf_results = [r for r in results if r['id'] not in dep_ids]
-    body = '\n\n---\n\n'.join(r['content'] for r in leaf_results)
+    visible_results = sorted(
+        [r for r in results if r['id'] not in dep_ids or r.get('task_type') == 'image_generation'],
+        key=lambda r: r['id'],
+    )
+    body = '\n\n---\n\n'.join(r['content'] for r in visible_results)
     yield _sse_chunk(body)
     yield _sse_done()

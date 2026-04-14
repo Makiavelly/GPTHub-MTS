@@ -98,6 +98,7 @@ youtube-transcript-api==1.2.4
 pytube==15.0.0
 
 pydub==0.25.1
+static-ffmpeg>=2.5
 ddgs==9.11.3
 
 azure-ai-documentintelligence==1.0.2
