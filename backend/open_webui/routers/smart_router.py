@@ -1,6 +1,4 @@
 import asyncio
-import base64
-import io as _io
 import json
 import logging
 import re
@@ -15,9 +13,6 @@ ROUTER_MODEL = 'mws-gpt-alpha'
 
 # MWS API base URL — used for all smart router calls directly, bypassing OpenWebUI proxy
 MWS_BASE_URL = 'https://api.gpt.mws.ru/v1'
-
-# Whisper model for audio transcription
-WHISPER_MODEL = 'whisper-turbo-local'
 
 # Maps task type → actual model ID on MWS (tools use None)
 MODEL_REGISTRY = {
@@ -83,16 +78,31 @@ def _strip_plan_header(text: str) -> str:
 def _decompose_text(user_text: str) -> str:
     """Extract clean user intent for the decomposer.
 
-    Strips OpenWebUI RAG injections:
-    - '### Task:...\\n\\n' preamble (from DEFAULT_RAG_TEMPLATE)
-    - '<context>...</context>' blocks with retrieved documents
-    - '<attached_files>...</attached_files>' file reference tags
+    OpenWebUI's RAG pipeline prepends the full RAG template (### Task: / ### Guidelines:
+    / ### Output: / <context>...</context>) BEFORE the user's original message.
+    The user's actual query is always the last non-template paragraph.
 
-    The execution models already receive the full context via original_messages.
+    Strips:
+    - '<context>...</context>' blocks
+    - '<attached_files>...</attached_files>' tags
+    - All '### Section:' template sections (everything before the last paragraph)
+
+    Execution models receive the full context via original_messages.
     """
     text = _RAG_CONTEXT_RE.sub('', user_text)
     text = re.sub(r'<attached_files>.*?</attached_files>', '', text, flags=re.DOTALL)
-    text = re.sub(r'^###\s*Task:.*?(?:\n\n|\Z)', '', text, flags=re.DOTALL)
+
+    # If the message was injected with a RAG preamble, the user's query sits at
+    # the very bottom. Split into paragraphs and take the last non-### one.
+    if re.match(r'^\s*###\s*Task:', user_text):
+        paragraphs = [p.strip() for p in text.split('\n\n') if p.strip()]
+        non_template = [p for p in paragraphs if not p.startswith('###')]
+        if non_template:
+            return non_template[-1]
+        if paragraphs:
+            return paragraphs[-1]
+        return ''
+
     return text.strip()
 
 
@@ -110,125 +120,6 @@ def _has_image(messages: list) -> bool:
         return False
     content = last_user.get('content', [])
     return isinstance(content, list) and any(p.get('type') == 'image_url' for p in content)
-
-
-def _has_audio(messages: list) -> bool:
-    """Check only the LAST user message for audio attachments."""
-    last_user = next((m for m in reversed(messages) if m.get('role') == 'user'), None)
-    if not last_user:
-        return False
-    content = last_user.get('content', [])
-    if not isinstance(content, list):
-        return False
-    for p in content:
-        ptype = p.get('type', '')
-        if ptype in ('audio', 'input_audio', 'audio_url'):
-            return True
-        if ptype == 'file' and p.get('file', {}).get('mime_type', '').startswith('audio/'):
-            return True
-    return False
-
-
-async def _transcribe_audio(messages: list, api_key: str) -> str:
-    """Extract audio from the last user message and transcribe via Whisper.
-
-    Handles multiple content formats:
-    - input_audio  (OpenAI Realtime format: {type, input_audio: {data, format}})
-    - audio_url    ({type, audio_url: {url}}) — data URL or http URL
-    - file         ({type, file, file: {url, mime_type}}) — OpenWebUI file upload
-    """
-    last_user = next((m for m in reversed(messages) if m.get('role') == 'user'), None)
-    if not last_user:
-        return ''
-    content = last_user.get('content', [])
-    if not isinstance(content, list):
-        return ''
-
-    audio_parts = [
-        p
-        for p in content
-        if p.get('type') in ('audio', 'input_audio', 'audio_url')
-        or (p.get('type') == 'file' and p.get('file', {}).get('mime_type', '').startswith('audio/'))
-    ]
-
-    transcriptions: list[str] = []
-
-    for part in audio_parts:
-        audio_data: bytes | None = None
-        filename = 'audio.mp3'
-        ptype = part.get('type', '')
-
-        try:
-            if ptype == 'input_audio':
-                inp = part.get('input_audio', {})
-                fmt = inp.get('format', 'mp3')
-                filename = f'audio.{fmt}'
-                audio_data = base64.b64decode(inp.get('data', ''))
-
-            elif ptype in ('audio', 'audio_url'):
-                url = part.get('audio_url', {}).get('url') or part.get('url') or ''
-                if url.startswith('data:'):
-                    header, b64data = url.split(',', 1)
-                    mime = header.split(';')[0].split(':')[1]
-                    ext = mime.split('/')[1] if '/' in mime else 'mp3'
-                    filename = f'audio.{ext}'
-                    audio_data = base64.b64decode(b64data)
-                elif url:
-                    async with aiohttp.ClientSession() as session:
-                        async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
-                            audio_data = await resp.read()
-                            ct = resp.headers.get('Content-Type', '')
-                            if '/' in ct:
-                                ext = ct.split('/')[1].split(';')[0].strip()
-                                filename = f'audio.{ext}'
-
-            elif ptype == 'file':
-                file_info = part.get('file', {})
-                url = file_info.get('url', '')
-                mime = file_info.get('mime_type', 'audio/mp3')
-                ext = mime.split('/')[1] if '/' in mime else 'mp3'
-                filename = f'audio.{ext}'
-                if url:
-                    async with aiohttp.ClientSession() as session:
-                        async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
-                            audio_data = await resp.read()
-
-        except Exception as e:
-            log.warning(f'[smart_router] could not extract audio data ({ptype}): {e}')
-            continue
-
-        if not audio_data:
-            continue
-
-        # Send to Whisper
-        try:
-            ext = filename.rsplit('.', 1)[-1]
-            form = aiohttp.FormData()
-            form.add_field('model', WHISPER_MODEL)
-            form.add_field(
-                'file',
-                _io.BytesIO(audio_data),
-                filename=filename,
-                content_type=f'audio/{ext}',
-            )
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    f'{MWS_BASE_URL}/audio/transcriptions',
-                    headers={'Authorization': f'Bearer {api_key}'},
-                    data=form,
-                    timeout=aiohttp.ClientTimeout(total=120),
-                ) as resp:
-                    result = await resp.json()
-            text = result.get('text', '').strip()
-            if text:
-                log.info(f'[smart_router] whisper transcription: {text!r}')
-                transcriptions.append(text)
-            else:
-                log.warning(f'[smart_router] whisper returned empty text, full response: {result}')
-        except Exception as e:
-            log.error(f'[smart_router] whisper transcription failed for {filename}: {e}')
-
-    return '\n\n'.join(transcriptions)
 
 
 async def _decompose(user_text: str, has_image: bool, api_key: str) -> list[dict]:
@@ -451,21 +342,31 @@ async def _execute_task(
         return {'id': task['id'], 'type': 'image', 'task_type': task_type, 'model': model, 'content': content}
 
     # For all chat-based tasks (text / reasoning / coding / vlm)
-    # Use conversation history up to (not including) the last user message
-    history = [m for m in original_messages if m.get('role') in ('system', 'assistant')]
-    user_msg: dict = {'role': 'user', 'content': prompt}
+    has_deps = bool(task.get('depends_on', []))
 
-    # For vlm: carry the image parts from the original user message
-    if task_type == 'vlm':
-        last_user = next((m for m in reversed(original_messages) if m.get('role') == 'user'), None)
-        if last_user:
-            orig_content = last_user.get('content', [])
-            if isinstance(orig_content, list):
-                image_parts = [p for p in orig_content if p.get('type') == 'image_url']
-                if image_parts:
-                    user_msg['content'] = [{'type': 'text', 'text': prompt}] + image_parts
+    if not has_deps and task_type != 'vlm':
+        # No upstream dependencies — the original messages already contain full
+        # context (RAG blocks, file transcriptions, conversation history).
+        # Pass them as-is so the model sees everything OpenWebUI injected.
+        messages = list(original_messages)
+    else:
+        # Task depends on other tasks (e.g. text summarising web_search output),
+        # or is a vlm task that needs image parts explicitly attached.
+        history = [m for m in original_messages if m.get('role') in ('system', 'assistant')]
+        user_msg: dict = {'role': 'user', 'content': prompt}
 
-    messages = history + [user_msg]
+        # For vlm: carry the image parts from the original user message
+        if task_type == 'vlm':
+            last_user = next((m for m in reversed(original_messages) if m.get('role') == 'user'), None)
+            if last_user:
+                orig_content = last_user.get('content', [])
+                if isinstance(orig_content, list):
+                    image_parts = [p for p in orig_content if p.get('type') == 'image_url']
+                    if image_parts:
+                        user_msg['content'] = [{'type': 'text', 'text': prompt}] + image_parts
+
+        messages = history + [user_msg]
+
     content = await _run_chat(messages, model, api_key)
     return {'id': task['id'], 'type': 'text', 'task_type': task_type, 'model': model, 'content': content}
 
@@ -495,11 +396,9 @@ TASK_DISPLAY = {
 INTERMEDIATE_TYPES = {'web_search', 'web_parse', 'vlm'}
 
 
-def _plan_lines(tasks: list, has_audio: bool = False) -> list[str]:
+def _plan_lines(tasks: list) -> list[str]:
     """Return plan as a list of lines to stream one by one."""
     lines = ['**Задачи:**\n']
-    if has_audio:
-        lines.append(f'  - `{WHISPER_MODEL}` — транскрипция аудио\n')
     # Build set of task IDs that are dependencies of others
     dep_ids = {d for t in tasks for d in t.get('depends_on', [])}
     for t in tasks:
@@ -547,6 +446,11 @@ async def stream_route(payload: dict, api_key: str, user_id: str = ''):
     """
     api_key = api_key.removeprefix('Bearer ').strip()
     log.info(f'[smart_router] api_key preview: {api_key[:8]!r}... (len={len(api_key)})')
+    log.info(f'[smart_router] payload keys: {list(payload.keys())}')
+    # Log non-messages payload fields (files, metadata, etc.)
+    for k, v in payload.items():
+        if k != 'messages':
+            log.info(f'[smart_router] payload[{k!r}]: {str(v)[:300]!r}')
 
     messages = list(payload.get('messages', []))
 
@@ -566,6 +470,19 @@ async def stream_route(payload: dict, api_key: str, user_id: str = ''):
     last_user = next((m for m in reversed(messages) if m.get('role') == 'user'), None)
     user_text = _extract_text(last_user) if last_user else ''
 
+    # Debug: log all messages to diagnose empty user_text cases
+    log.info(f'[smart_router] total messages: {len(messages)}, roles: {[m.get("role") for m in messages]}')
+    for mi, msg in enumerate(messages):
+        role = msg.get('role', '?')
+        content = msg.get('content', '')
+        if isinstance(content, list):
+            log.info(f'[smart_router] msg[{mi}] role={role} list-parts: {[p.get("type") for p in content]}')
+            for pi, part in enumerate(content):
+                if part.get('type') == 'text':
+                    log.info(f'[smart_router] msg[{mi}] part[{pi}] text first 400: {part.get("text","")[:400]!r}')
+        else:
+            log.info(f'[smart_router] msg[{mi}] role={role} str first 400: {str(content)[:400]!r}')
+
     # Internal OpenWebUI system tasks (title gen, follow-ups, tags) — route directly.
     # RAG-injected messages also start with '### Task:' (from DEFAULT_RAG_TEMPLATE)
     # but they contain a <context> block — those must go through decomposition.
@@ -577,21 +494,19 @@ async def stream_route(payload: dict, api_key: str, user_id: str = ''):
         yield _sse_done()
         return
 
-    # Transcribe audio if present — runs before decomposition so the transcription
-    # becomes part of the text that the decomposer sees.
-    audio_transcription = ''
-    if _has_audio(messages):
-        log.info('[smart_router] audio attachment detected, transcribing...')
-        audio_transcription = await _transcribe_audio(messages, api_key)
-        if audio_transcription:
-            note = f'[Транскрипция аудио]: {audio_transcription}'
-            user_text = f'{note}\n\n{user_text}' if user_text else note
-
     # Strip RAG preamble/context from user_text before decomposition.
     # The decomposer only needs the clean user intent ("о чём аудиофайл"),
     # not the injected ### Task: header or <context> blocks.
     # Execution models receive the full context via original_messages.
     clean_text = _decompose_text(user_text)
+
+    # If the user sent only a file without any text, clean_text will be empty.
+    # Use a sensible default so the decomposer doesn't hallucinate,
+    # and the execution model (which receives full original_messages with the
+    # transcription/file context) knows to describe the attached content.
+    if not clean_text and '<context>' in user_text:
+        clean_text = 'Проанализируй и опиши содержимое прикреплённого файла'
+
     log.info(f'[smart_router] clean decompose text: {clean_text!r}')
 
     # Decompose
@@ -607,7 +522,7 @@ async def stream_route(payload: dict, api_key: str, user_id: str = ''):
     log.info(f'[smart_router] task plan: {[t["type"] for t in tasks]}')
 
     # Stream plan line by line so it appears smoothly before tasks run
-    for line in _plan_lines(tasks, has_audio=bool(audio_transcription)):
+    for line in _plan_lines(tasks):
         yield _sse_chunk(line)
         await asyncio.sleep(0.06)
 
