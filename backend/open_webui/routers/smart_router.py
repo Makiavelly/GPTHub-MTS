@@ -1,4 +1,6 @@
 import asyncio
+import base64
+import io as _io
 import json
 import logging
 import re
@@ -13,6 +15,9 @@ ROUTER_MODEL = 'mws-gpt-alpha'
 
 # MWS API base URL — used for all smart router calls directly, bypassing OpenWebUI proxy
 MWS_BASE_URL = 'https://api.gpt.mws.ru/v1'
+
+# Whisper model for audio transcription
+WHISPER_MODEL = 'whisper-turbo-local'
 
 # Maps task type → actual model ID on MWS (tools use None)
 MODEL_REGISTRY = {
@@ -63,6 +68,9 @@ User: "что написано на этом сайте https://example.com"
 
 
 _PLAN_SEPARATOR = '\n\n---\n\n'
+_RAG_CONTEXT_RE = re.compile(r'<context>.*?</context>', re.DOTALL)
+# Matches the '### Task:\n...\n\n' preamble injected by OpenWebUI's RAG template
+_RAG_PREAMBLE_RE = re.compile(r'^###\s*Task:.*?(?=\n\n|\Z)', re.DOTALL)
 
 
 def _strip_plan_header(text: str) -> str:
@@ -70,6 +78,22 @@ def _strip_plan_header(text: str) -> str:
     if _PLAN_SEPARATOR in text:
         return text.split(_PLAN_SEPARATOR, 1)[1].strip()
     return text
+
+
+def _decompose_text(user_text: str) -> str:
+    """Extract clean user intent for the decomposer.
+
+    Strips OpenWebUI RAG injections:
+    - '### Task:...\\n\\n' preamble (from DEFAULT_RAG_TEMPLATE)
+    - '<context>...</context>' blocks with retrieved documents
+    - '<attached_files>...</attached_files>' file reference tags
+
+    The execution models already receive the full context via original_messages.
+    """
+    text = _RAG_CONTEXT_RE.sub('', user_text)
+    text = re.sub(r'<attached_files>.*?</attached_files>', '', text, flags=re.DOTALL)
+    text = re.sub(r'^###\s*Task:.*?(?:\n\n|\Z)', '', text, flags=re.DOTALL)
+    return text.strip()
 
 
 def _extract_text(message: dict) -> str:
@@ -86,6 +110,125 @@ def _has_image(messages: list) -> bool:
         return False
     content = last_user.get('content', [])
     return isinstance(content, list) and any(p.get('type') == 'image_url' for p in content)
+
+
+def _has_audio(messages: list) -> bool:
+    """Check only the LAST user message for audio attachments."""
+    last_user = next((m for m in reversed(messages) if m.get('role') == 'user'), None)
+    if not last_user:
+        return False
+    content = last_user.get('content', [])
+    if not isinstance(content, list):
+        return False
+    for p in content:
+        ptype = p.get('type', '')
+        if ptype in ('audio', 'input_audio', 'audio_url'):
+            return True
+        if ptype == 'file' and p.get('file', {}).get('mime_type', '').startswith('audio/'):
+            return True
+    return False
+
+
+async def _transcribe_audio(messages: list, api_key: str) -> str:
+    """Extract audio from the last user message and transcribe via Whisper.
+
+    Handles multiple content formats:
+    - input_audio  (OpenAI Realtime format: {type, input_audio: {data, format}})
+    - audio_url    ({type, audio_url: {url}}) — data URL or http URL
+    - file         ({type, file, file: {url, mime_type}}) — OpenWebUI file upload
+    """
+    last_user = next((m for m in reversed(messages) if m.get('role') == 'user'), None)
+    if not last_user:
+        return ''
+    content = last_user.get('content', [])
+    if not isinstance(content, list):
+        return ''
+
+    audio_parts = [
+        p
+        for p in content
+        if p.get('type') in ('audio', 'input_audio', 'audio_url')
+        or (p.get('type') == 'file' and p.get('file', {}).get('mime_type', '').startswith('audio/'))
+    ]
+
+    transcriptions: list[str] = []
+
+    for part in audio_parts:
+        audio_data: bytes | None = None
+        filename = 'audio.mp3'
+        ptype = part.get('type', '')
+
+        try:
+            if ptype == 'input_audio':
+                inp = part.get('input_audio', {})
+                fmt = inp.get('format', 'mp3')
+                filename = f'audio.{fmt}'
+                audio_data = base64.b64decode(inp.get('data', ''))
+
+            elif ptype in ('audio', 'audio_url'):
+                url = part.get('audio_url', {}).get('url') or part.get('url') or ''
+                if url.startswith('data:'):
+                    header, b64data = url.split(',', 1)
+                    mime = header.split(';')[0].split(':')[1]
+                    ext = mime.split('/')[1] if '/' in mime else 'mp3'
+                    filename = f'audio.{ext}'
+                    audio_data = base64.b64decode(b64data)
+                elif url:
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                            audio_data = await resp.read()
+                            ct = resp.headers.get('Content-Type', '')
+                            if '/' in ct:
+                                ext = ct.split('/')[1].split(';')[0].strip()
+                                filename = f'audio.{ext}'
+
+            elif ptype == 'file':
+                file_info = part.get('file', {})
+                url = file_info.get('url', '')
+                mime = file_info.get('mime_type', 'audio/mp3')
+                ext = mime.split('/')[1] if '/' in mime else 'mp3'
+                filename = f'audio.{ext}'
+                if url:
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                            audio_data = await resp.read()
+
+        except Exception as e:
+            log.warning(f'[smart_router] could not extract audio data ({ptype}): {e}')
+            continue
+
+        if not audio_data:
+            continue
+
+        # Send to Whisper
+        try:
+            ext = filename.rsplit('.', 1)[-1]
+            form = aiohttp.FormData()
+            form.add_field('model', WHISPER_MODEL)
+            form.add_field(
+                'file',
+                _io.BytesIO(audio_data),
+                filename=filename,
+                content_type=f'audio/{ext}',
+            )
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f'{MWS_BASE_URL}/audio/transcriptions',
+                    headers={'Authorization': f'Bearer {api_key}'},
+                    data=form,
+                    timeout=aiohttp.ClientTimeout(total=120),
+                ) as resp:
+                    result = await resp.json()
+            text = result.get('text', '').strip()
+            if text:
+                log.info(f'[smart_router] whisper transcription: {text!r}')
+                transcriptions.append(text)
+            else:
+                log.warning(f'[smart_router] whisper returned empty text, full response: {result}')
+        except Exception as e:
+            log.error(f'[smart_router] whisper transcription failed for {filename}: {e}')
+
+    return '\n\n'.join(transcriptions)
 
 
 async def _decompose(user_text: str, has_image: bool, api_key: str) -> list[dict]:
@@ -352,9 +495,11 @@ TASK_DISPLAY = {
 INTERMEDIATE_TYPES = {'web_search', 'web_parse', 'vlm'}
 
 
-def _plan_lines(tasks: list) -> list[str]:
+def _plan_lines(tasks: list, has_audio: bool = False) -> list[str]:
     """Return plan as a list of lines to stream one by one."""
     lines = ['**Задачи:**\n']
+    if has_audio:
+        lines.append(f'  - `{WHISPER_MODEL}` — транскрипция аудио\n')
     # Build set of task IDs that are dependencies of others
     dep_ids = {d for t in tasks for d in t.get('depends_on', [])}
     for t in tasks:
@@ -421,8 +566,10 @@ async def stream_route(payload: dict, api_key: str, user_id: str = ''):
     last_user = next((m for m in reversed(messages) if m.get('role') == 'user'), None)
     user_text = _extract_text(last_user) if last_user else ''
 
-    # Internal OpenWebUI system tasks (title gen, follow-ups, tags) — route directly
-    if user_text.startswith('### Task:'):
+    # Internal OpenWebUI system tasks (title gen, follow-ups, tags) — route directly.
+    # RAG-injected messages also start with '### Task:' (from DEFAULT_RAG_TEMPLATE)
+    # but they contain a <context> block — those must go through decomposition.
+    if user_text.startswith('### Task:') and '<context>' not in user_text:
         log.debug('[smart_router] internal system task, skipping routing')
         model = MODEL_REGISTRY['text']
         content = await _run_chat(messages, model, api_key)
@@ -430,20 +577,37 @@ async def stream_route(payload: dict, api_key: str, user_id: str = ''):
         yield _sse_done()
         return
 
+    # Transcribe audio if present — runs before decomposition so the transcription
+    # becomes part of the text that the decomposer sees.
+    audio_transcription = ''
+    if _has_audio(messages):
+        log.info('[smart_router] audio attachment detected, transcribing...')
+        audio_transcription = await _transcribe_audio(messages, api_key)
+        if audio_transcription:
+            note = f'[Транскрипция аудио]: {audio_transcription}'
+            user_text = f'{note}\n\n{user_text}' if user_text else note
+
+    # Strip RAG preamble/context from user_text before decomposition.
+    # The decomposer only needs the clean user intent ("о чём аудиофайл"),
+    # not the injected ### Task: header or <context> blocks.
+    # Execution models receive the full context via original_messages.
+    clean_text = _decompose_text(user_text)
+    log.info(f'[smart_router] clean decompose text: {clean_text!r}')
+
     # Decompose
     try:
-        tasks = await _decompose(user_text, has_image, api_key)
+        tasks = await _decompose(clean_text or user_text, has_image, api_key)
     except Exception as exc:
         log.error(f'[smart_router] decompose FAILED: {exc!r}, falling back to text')
         tasks = []
 
     if not tasks:
-        tasks = [{'id': 0, 'type': 'text', 'prompt': user_text, 'depends_on': []}]
+        tasks = [{'id': 0, 'type': 'text', 'prompt': clean_text or user_text, 'depends_on': []}]
 
     log.info(f'[smart_router] task plan: {[t["type"] for t in tasks]}')
 
     # Stream plan line by line so it appears smoothly before tasks run
-    for line in _plan_lines(tasks):
+    for line in _plan_lines(tasks, has_audio=bool(audio_transcription)):
         yield _sse_chunk(line)
         await asyncio.sleep(0.06)
 
