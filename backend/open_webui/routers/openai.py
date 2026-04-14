@@ -1038,22 +1038,30 @@ async def generate_chat_completion(
 
     # ── Smart Router ──────────────────────────────────────────────────────────
     if model_id == 'auto':
-        from open_webui.routers.smart_router import stream_route as _stream_route
+        # Internal server-side calls (memory extraction, title gen, etc.) must not
+        # go through the smart router: the plan header it prepends breaks JSON parsing.
+        # Detect internal calls via bypass_filter and reroute to the default text model.
+        if getattr(request.state, 'bypass_filter', False):
+            from open_webui.routers.smart_router import MODEL_REGISTRY
+            payload['model'] = MODEL_REGISTRY['text']
+            model_id = MODEL_REGISTRY['text']
+        else:
+            from open_webui.routers.smart_router import stream_route as _stream_route
 
-        # Find the MWS connection by URL instead of assuming it's at index 0
-        _mws_key = ''
-        _urls = request.app.state.config.OPENAI_API_BASE_URLS
-        _keys = request.app.state.config.OPENAI_API_KEYS
-        for _i, _url in enumerate(_urls):
-            if 'gpt.mws.ru' in _url and _i < len(_keys):
-                _mws_key = _keys[_i]
-                break
-        if not _mws_key:
-            _mws_key = _keys[0] if _keys else ''
-        return StreamingResponse(
-            _stream_route(payload, _mws_key, user_id=user.id),
-            media_type='text/event-stream',
-        )
+            # Find the MWS connection by URL instead of assuming it's at index 0
+            _mws_key = ''
+            _urls = request.app.state.config.OPENAI_API_BASE_URLS
+            _keys = request.app.state.config.OPENAI_API_KEYS
+            for _i, _url in enumerate(_urls):
+                if 'gpt.mws.ru' in _url and _i < len(_keys):
+                    _mws_key = _keys[_i]
+                    break
+            if not _mws_key:
+                _mws_key = _keys[0] if _keys else ''
+            return StreamingResponse(
+                _stream_route(payload, _mws_key, user_id=user.id),
+                media_type='text/event-stream',
+            )
     # ─────────────────────────────────────────────────────────────────────────
 
     model_info = Models.get_model_by_id(model_id)
