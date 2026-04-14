@@ -29,7 +29,6 @@
 	"{{COUNT}}y_time_ago": "{{COUNT}}a",
 	"{{LOCALIZED_DATE}} at {{LOCALIZED_TIME}}": "{{LOCALIZED_DATE}} a les {{LOCALIZED_TIME}}",
 	"{{model}} download has been canceled": "La descàrrega del model {{model}} s'ha cancel·lat",
-	"{{modelName}} profile image": "Imatge del perfil {{modelName}}",
 	"{{NAMES}} reacted with {{REACTION}}": "{{NAMES}} han reaccionat amb {{REACTION}}",
 	"{{user}}'s Chats": "Els xats de {{user}}",
 	"{{webUIName}} Backend Required": "El Backend de {{webUIName}} és necessari",

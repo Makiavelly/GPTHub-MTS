@@ -539,6 +539,17 @@ async def get_all_models(request: Request, user: UserModel) -> dict[str, list]:
     models = get_merged_models(map(extract_data, responses))
     log.debug(f'models: {models}')
 
+    # Virtual model: routes requests automatically via LLM decomposer
+    _first_idx = 0
+    models['auto'] = {
+        'id': 'auto',
+        'name': 'Auto Router',
+        'owned_by': 'open-webui',
+        'urlIdx': _first_idx,
+        'openai': {'id': 'auto'},
+        'connection_type': 'internal',
+    }
+
     request.app.state.OPENAI_MODELS = models
     return {'data': list(models.values())}
 
@@ -1024,6 +1035,27 @@ async def generate_chat_completion(
     metadata = payload.pop('metadata', None)
 
     model_id = form_data.get('model')
+
+    # ── Smart Router ──────────────────────────────────────────────────────────
+    if model_id == 'auto':
+        from open_webui.routers.smart_router import stream_route as _stream_route
+
+        # Find the MWS connection by URL instead of assuming it's at index 0
+        _mws_key = ''
+        _urls = request.app.state.config.OPENAI_API_BASE_URLS
+        _keys = request.app.state.config.OPENAI_API_KEYS
+        for _i, _url in enumerate(_urls):
+            if 'gpt.mws.ru' in _url and _i < len(_keys):
+                _mws_key = _keys[_i]
+                break
+        if not _mws_key:
+            _mws_key = _keys[0] if _keys else ''
+        return StreamingResponse(
+            _stream_route(payload, _mws_key, user_id=user.id),
+            media_type='text/event-stream',
+        )
+    # ─────────────────────────────────────────────────────────────────────────
+
     model_info = Models.get_model_by_id(model_id)
 
     # Check model info and override the payload

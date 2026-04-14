@@ -29,7 +29,6 @@
 	"{{COUNT}}y_time_ago": "há {{COUNT}} anos",
 	"{{LOCALIZED_DATE}} at {{LOCALIZED_TIME}}": "{{LOCALIZED_DATE}} às {{LOCALIZED_TIME}}",
 	"{{model}} download has been canceled": "A transferência de {{model}} foi cancelada",
-	"{{modelName}} profile image": "Imagem de perfil de {{modelName}}",
 	"{{NAMES}} reacted with {{REACTION}}": "{{NAMES}} reagiram com {{REACTION}}",
 	"{{user}}'s Chats": "Chats de {{user}}",
 	"{{webUIName}} Backend Required": "Backend {{webUIName}} Necessário",

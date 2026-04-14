@@ -28,7 +28,6 @@
 	"{{COUNT}}y_time_ago": "",
 	"{{LOCALIZED_DATE}} at {{LOCALIZED_TIME}}": "",
 	"{{model}} download has been canceled": "",
-	"{{modelName}} profile image": "",
 	"{{NAMES}} reacted with {{REACTION}}": "",
 	"{{user}}'s Chats": "Συνομιλίες του {{user}}",
 	"{{webUIName}} Backend Required": "{{webUIName}} Απαιτείται Backend",

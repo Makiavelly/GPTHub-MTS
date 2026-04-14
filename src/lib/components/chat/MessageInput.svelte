@@ -12,6 +12,7 @@
 	dayjs.extend(relativeTime);
 
 	import { onMount, tick, getContext, createEventDispatcher } from 'svelte';
+	import { fly } from 'svelte/transition';
 
 	import { createPicker, getAuthToken } from '$lib/utils/google-drive-picker';
 	import { pickAndDownloadFile } from '$lib/utils/onedrive-file-picker';
@@ -118,6 +119,10 @@
 	let selectedModelIds = [];
 	$: selectedModelIds = atSelectedModel !== undefined ? [atSelectedModel.id] : selectedModels;
 
+	let isAutoRouterSelected = false;
+	$: isAutoRouterSelected =
+		selectedModelIds.length === 1 && `${selectedModelIds[0] ?? ''}`.trim() === 'auto';
+
 	export let history;
 	export let taskIds = null;
 
@@ -131,6 +136,10 @@
 	export let webSearchEnabled = false;
 	export let codeInterpreterEnabled = false;
 	export let taskMode = 'auto';
+
+	$: if (!isAutoRouterSelected && taskMode !== 'auto') {
+		taskMode = 'auto';
+	}
 
 	export let pendingOAuthTools = [];
 
@@ -1571,29 +1580,36 @@
 											{/key}
 										{/key}
 									{/if}
+								</div>
 							</div>
-						</div>
 
-						<div class="mx-0.5 flex flex-wrap gap-1.5 px-2 pb-1" dir="ltr">
-							{#each modes as mode}
-								<button
-									type="button"
-									class="flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition {taskMode ===
-									mode.id
-										? 'border-blue-500 bg-blue-600 text-white'
-										: 'border-transparent text-gray-500 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-100'}"
-									aria-pressed={taskMode === mode.id}
-									on:click={() => {
-										taskMode = mode.id;
-									}}
+							{#if isAutoRouterSelected}
+								<div
+									class="mx-0.5 flex flex-wrap gap-1.5 px-2 pb-1"
+									dir="ltr"
+									in:fly={{ y: 12, duration: 220, opacity: 0.15 }}
+									out:fly={{ y: -8, duration: 160, opacity: 0.1 }}
 								>
-									<span aria-hidden="true">{mode.icon}</span>
-									<span class="font-medium">{mode.label}</span>
-								</button>
-							{/each}
-						</div>
+									{#each modes as mode}
+										<button
+											type="button"
+											class="flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition {taskMode ===
+											mode.id
+												? 'border-blue-500 bg-blue-600 text-white'
+												: 'border-transparent text-gray-500 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-100'}"
+											aria-pressed={taskMode === mode.id}
+											on:click={() => {
+												taskMode = mode.id;
+											}}
+										>
+											<span aria-hidden="true">{mode.icon}</span>
+											<span class="font-medium">{mode.label}</span>
+										</button>
+									{/each}
+								</div>
+							{/if}
 
-						<div class=" flex justify-between mt-0.5 mb-2.5 mx-0.5 max-w-full" dir="ltr">
+							<div class=" flex justify-between mt-0.5 mb-2.5 mx-0.5 max-w-full" dir="ltr">
 								<div class="ml-1 self-end flex items-center flex-1 max-w-[80%]">
 									<InputMenu
 										bind:files

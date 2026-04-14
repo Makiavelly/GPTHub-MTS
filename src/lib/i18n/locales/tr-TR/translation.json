@@ -28,7 +28,6 @@
 	"{{COUNT}}y_time_ago": "{{COUNT}} yıl önce",
 	"{{LOCALIZED_DATE}} at {{LOCALIZED_TIME}}": "{{LOCALIZED_DATE}} tarihinde saat {{LOCALIZED_TIME}}",
 	"{{model}} download has been canceled": "{{model}} indirme işlemi iptal edildi",
-	"{{modelName}} profile image": "{{modelName}} profil resmi",
 	"{{NAMES}} reacted with {{REACTION}}": "{{NAMES}}, {{REACTION}} ile tepki verdi",
 	"{{user}}'s Chats": "{{user}}'ın Sohbetleri",
 	"{{webUIName}} Backend Required": "{{webUIName}} Arka-uç Gerekli",

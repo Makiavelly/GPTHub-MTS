@@ -27,7 +27,6 @@
 	"{{COUNT}}y_time_ago": "",
 	"{{LOCALIZED_DATE}} at {{LOCALIZED_TIME}}": "{{LOCALIZED_DATE}} {{LOCALIZED_TIME}}",
 	"{{model}} download has been canceled": "{{model}} のダウンロードがキャンセルされました",
-	"{{modelName}} profile image": "",
 	"{{NAMES}} reacted with {{REACTION}}": "",
 	"{{user}}'s Chats": "{{user}} のチャット",
 	"{{webUIName}} Backend Required": "{{webUIName}} バックエンドが必要です",
