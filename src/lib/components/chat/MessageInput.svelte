@@ -69,8 +69,6 @@
 	import InputMenu from './MessageInput/InputMenu.svelte';
 	import VoiceRecording from './MessageInput/VoiceRecording.svelte';
 
-	import ToolServersModal from './ToolServersModal.svelte';
-
 	import RichTextInput from '../common/RichTextInput.svelte';
 	import Tooltip from '../common/Tooltip.svelte';
 	import FileItem from '../common/FileItem.svelte';
@@ -78,8 +76,11 @@
 	import Spinner from '../common/Spinner.svelte';
 
 	import XMark from '../icons/XMark.svelte';
+	import Code from '../icons/Code.svelte';
+	import Eye from '../icons/Eye.svelte';
 	import GlobeAlt from '../icons/GlobeAlt.svelte';
 	import Photo from '../icons/Photo.svelte';
+	import Search from '../icons/Search.svelte';
 	import Wrench from '../icons/Wrench.svelte';
 	import Sparkles from '../icons/Sparkles.svelte';
 
@@ -124,13 +125,13 @@
 		selectedModelIds.length === 1 && `${selectedModelIds[0] ?? ''}`.trim() === 'auto';
 
 	export let history;
-	export let taskIds = null;
+	export let taskIds: string[] | null = null;
 
 	export let prompt = '';
 	export let files = [];
 
-	export let selectedToolIds = [];
-	export let selectedFilterIds = [];
+	export let selectedToolIds: string[] = [];
+	export let selectedFilterIds: string[] = [];
 
 	export let imageGenerationEnabled = false;
 	export let webSearchEnabled = false;
@@ -141,9 +142,15 @@
 		taskMode = 'auto';
 	}
 
-	export let pendingOAuthTools = [];
+	export let pendingOAuthTools: {
+		id: string;
+		name: string;
+		serverId: string;
+		authType?: string;
+	}[] = [];
 
 	let showTerminalMenu = false;
+	let showIntegrationsMenu = false;
 
 	export let messageQueue: { id: string; prompt: string; files: any[]; taskMode?: string }[] = [];
 	export let onQueueSendNow: (id: string) => void = () => {};
@@ -417,8 +424,6 @@
 		['/', '#', '@', '$'].includes(command?.charAt(0)) || '\\#' === command?.slice(0, 2);
 	let suggestions = null;
 
-	let showTools = false;
-
 	let loaded = false;
 	let recording = false;
 
@@ -464,13 +469,29 @@
 	let user = null;
 	export let placeholder = '';
 
+	type ToggleFilter = {
+		id: string;
+		name: string;
+		description?: string;
+		icon?: string;
+		has_user_valves?: boolean;
+	};
+
+	type ChipItem = {
+		id: string;
+		label: string;
+	};
+
 	const modes = [
-		{ id: 'auto', icon: '✨', label: 'Авто' },
-		{ id: 'code', icon: '💻', label: 'Код' },
-		{ id: 'search', icon: '🔍', label: 'Поиск' },
-		{ id: 'vision', icon: '👁', label: 'Анализ' },
-		{ id: 'image', icon: '🎨', label: 'Картинка' }
+		{ id: 'auto', icon: Sparkles, label: 'Авто' },
+		{ id: 'code', icon: Code, label: 'Код' },
+		{ id: 'search', icon: Search, label: 'Поиск' },
+		{ id: 'vision', icon: Eye, label: 'Анализ' },
+		{ id: 'image', icon: Photo, label: 'Картинка' }
 	];
+
+	const chipClass =
+		'group inline-flex max-w-full items-center gap-2 rounded-full border border-gray-200/70 bg-gray-50/90 px-2.5 py-1 text-xs font-medium text-gray-600 transition-colors duration-150 hover:border-gray-300 hover:bg-white hover:text-gray-900 dark:border-gray-700/80 dark:bg-gray-800/80 dark:text-gray-200 dark:hover:border-gray-600 dark:hover:bg-gray-800';
 
 	const getSubmitPayload = () => ({
 		prompt,
@@ -508,7 +529,7 @@
 			$models.find((m) => m.id === model)?.info?.meta?.capabilities?.code_interpreter ?? true
 	);
 
-	let toggleFilters = [];
+	let toggleFilters: ToggleFilter[] = [];
 	$: toggleFilters = (atSelectedModel?.id ? [atSelectedModel.id] : selectedModels)
 		.map((id) => ($models.find((model) => model.id === id) || {})?.filters ?? [])
 		.reduce((acc, filters) => acc.filter((f1) => filters.some((f2) => f2.id === f1.id)));
@@ -537,6 +558,41 @@
 			codeInterpreterCapableModels.length &&
 		$config?.features?.enable_code_interpreter &&
 		($_user.role === 'admin' || $_user?.permissions?.features?.code_interpreter);
+
+	let selectedToolChipItems: ChipItem[] = [];
+	$: {
+		const toolNames = new Map();
+
+		($tools ?? []).forEach((tool) => {
+			toolNames.set(tool.id, tool.name);
+		});
+
+		($toolServers ?? []).forEach((server, index) => {
+			if (server?.info) {
+				toolNames.set(`direct_server:${index}`, server?.info?.title ?? server.url);
+			}
+		});
+
+		selectedToolChipItems = (selectedToolIds ?? []).map(
+			(id): ChipItem => ({
+				id,
+				label: toolNames.get(id) ?? id
+			})
+		);
+	}
+
+	let selectedTaskMode: (typeof modes)[number] = modes[0];
+	$: selectedTaskMode = modes.find((mode) => mode.id === taskMode) ?? modes[0];
+
+	let hasIntegrationChips = false;
+	$: hasIntegrationChips =
+		isAutoRouterSelected ||
+		selectedToolChipItems.length > 0 ||
+		(selectedFilterIds ?? []).length > 0 ||
+		webSearchEnabled ||
+		imageGenerationEnabled ||
+		codeInterpreterEnabled ||
+		(pendingOAuthTools ?? []).length > 0;
 
 	// Disable code interpreter when terminal is active (mutually exclusive)
 	$: if ($selectedTerminalId && codeInterpreterEnabled) {
@@ -1103,8 +1159,6 @@
 	});
 </script>
 
-<ToolServersModal bind:show={showTools} {selectedToolIds} />
-
 <InputVariablesModal
 	bind:show={showInputVariablesModal}
 	variables={inputVariables}
@@ -1583,34 +1637,8 @@
 								</div>
 							</div>
 
-							{#if isAutoRouterSelected}
-								<div
-									class="mx-0.5 flex flex-wrap gap-1.5 px-2 pb-1"
-									dir="ltr"
-									in:fly={{ y: 12, duration: 220, opacity: 0.15 }}
-									out:fly={{ y: -8, duration: 160, opacity: 0.1 }}
-								>
-									{#each modes as mode}
-										<button
-											type="button"
-											class="flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition {taskMode ===
-											mode.id
-												? 'border-blue-500 bg-blue-600 text-white'
-												: 'border-transparent text-gray-500 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-100'}"
-											aria-pressed={taskMode === mode.id}
-											on:click={() => {
-												taskMode = mode.id;
-											}}
-										>
-											<span aria-hidden="true">{mode.icon}</span>
-											<span class="font-medium">{mode.label}</span>
-										</button>
-									{/each}
-								</div>
-							{/if}
-
 							<div class=" flex justify-between mt-0.5 mb-2.5 mx-0.5 max-w-full" dir="ltr">
-								<div class="ml-1 self-end flex items-center flex-1 max-w-[80%]">
+								<div class="ml-1 self-end flex items-center flex-1 max-w-[80%] min-w-0">
 									<InputMenu
 										bind:files
 										selectedModels={atSelectedModel ? [atSelectedModel.id] : selectedModels}
@@ -1671,12 +1699,13 @@
 										</div>
 									</InputMenu>
 
-									{#if showWebSearchButton || showImageGenerationButton || showCodeInterpreterButton || showToolsButton || (toggleFilters && toggleFilters.length > 0)}
+									{#if showWebSearchButton || showImageGenerationButton || showCodeInterpreterButton || showToolsButton || (toggleFilters && toggleFilters.length > 0) || isAutoRouterSelected}
 										<div
 											class="flex self-center w-[1px] h-4 mx-1 bg-gray-200/50 dark:bg-gray-800/50"
-										/>
+										></div>
 
 										<IntegrationsMenu
+											bind:show={showIntegrationsMenu}
 											selectedModels={atSelectedModel ? [atSelectedModel.id] : selectedModels}
 											{toggleFilters}
 											{showWebSearchButton}
@@ -1687,6 +1716,8 @@
 											bind:webSearchEnabled
 											bind:imageGenerationEnabled
 											bind:codeInterpreterEnabled
+											bind:taskMode
+											showTaskModes={isAutoRouterSelected}
 											closeOnOutsideClick={integrationsMenuCloseOnOutsideClick}
 											onShowValves={(e) => {
 												const { type, id } = e;
@@ -1712,7 +1743,7 @@
 									{/if}
 
 									{#if selectedModelIds.length === 1 && $models.find((m) => m.id === selectedModelIds[0])?.has_user_valves}
-										<div class="ml-1 flex gap-1.5">
+										<div class="ml-1 flex gap-1.5 shrink-0">
 											<Tooltip content={$i18n.t('Valves')} placement="top">
 												<button
 													type="button"
@@ -1730,150 +1761,206 @@
 										</div>
 									{/if}
 
-									<div class="ml-1 flex gap-1.5">
-										{#if (selectedToolIds ?? []).length > 0}
-											<Tooltip
-												content={$i18n.t('{{COUNT}} Available Tools', {
-													COUNT: (selectedToolIds ?? []).length
-												})}
-											>
-												<button
-													class="translate-y-[0.5px] px-1 flex gap-1 items-center text-gray-600 dark:text-gray-300 hover:text-gray-700 dark:hover:text-gray-200 rounded-lg self-center transition"
-													aria-label="Available Tools"
-													type="button"
-													on:click={() => {
-														showTools = !showTools;
-													}}
-												>
-													<Wrench className="size-4" strokeWidth="1.75" />
-
-													<span class="text-sm">
-														{(selectedToolIds ?? []).length}
-													</span>
-												</button>
-											</Tooltip>
-										{/if}
-
-										{#each selectedFilterIds as filterId (filterId)}
-											{@const filter = toggleFilters.find((f) => f.id === filterId)}
-											{#if filter}
-												<Tooltip content={filter?.name} placement="top">
+									{#if hasIntegrationChips}
+										<div
+											class="ml-1 flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto pr-1"
+											dir="ltr"
+											in:fly={{ y: 12, duration: 220, opacity: 0.15 }}
+											out:fly={{ y: -8, duration: 160, opacity: 0.1 }}
+										>
+											{#if isAutoRouterSelected}
+												<Tooltip content={selectedTaskMode.label} placement="top">
 													<button
-														on:click|preventDefault={() => {
-															selectedFilterIds = selectedFilterIds.filter((id) => id !== filterId);
-														}}
 														type="button"
-														class="group p-[7px] flex gap-1.5 items-center text-sm rounded-full transition-colors duration-300 focus:outline-hidden max-w-full overflow-hidden {selectedFilterIds.includes(
-															filterId
-														)
-															? 'text-sky-500 dark:text-sky-300 bg-sky-50 hover:bg-sky-100 dark:bg-sky-400/10 dark:hover:bg-sky-600/10 border border-sky-200/40 dark:border-sky-500/20'
-															: 'bg-transparent text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 '} capitalize"
+														class="{chipClass} shrink-0"
+														on:click|preventDefault={() => {
+															taskMode = 'auto';
+														}}
 													>
-														{#if filter?.icon}
-															<div class="size-4 items-center flex justify-center">
-																<img
-																	src={filter.icon}
-																	class="size-3.5 {filter.icon.includes('data:image/svg')
-																		? 'dark:invert-[80%]'
-																		: ''}"
-																	style="fill: currentColor;"
-																	alt={filter.name}
+														<span
+															class="relative flex size-3.5 shrink-0 items-center justify-center"
+														>
+															<span class="flex items-center justify-center group-hover:hidden">
+																<svelte:component
+																	this={selectedTaskMode.icon}
+																	className="size-3.5"
+																	strokeWidth="1.6"
 																/>
-															</div>
-														{:else}
-															<Sparkles className="size-4" strokeWidth="1.75" />
-														{/if}
-														<div class="hidden group-hover:block">
-															<XMark className="size-4" strokeWidth="1.75" />
-														</div>
+															</span>
+															<span class="hidden items-center justify-center group-hover:flex">
+																<XMark className="size-3 opacity-70" />
+															</span>
+														</span>
+														<span class="truncate">{selectedTaskMode.label}</span>
 													</button>
 												</Tooltip>
 											{/if}
-										{/each}
 
-										{#if webSearchEnabled}
-											<Tooltip content={$i18n.t('Web Search')} placement="top">
-												<button
-													on:click|preventDefault={() => (webSearchEnabled = !webSearchEnabled)}
-													type="button"
-													class="group p-[7px] flex gap-1.5 items-center text-sm rounded-full transition-colors duration-300 focus:outline-hidden max-w-full overflow-hidden {webSearchEnabled ||
-													($settings?.webSearch ?? false) === 'always'
-														? ' text-sky-500 dark:text-sky-300 bg-sky-50 hover:bg-sky-100 dark:bg-sky-400/10 dark:hover:bg-sky-600/10 border border-sky-200/40 dark:border-sky-500/20'
-														: 'bg-transparent text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 '}"
-												>
-													<GlobeAlt className="size-4" strokeWidth="1.75" />
-													<div class="hidden group-hover:block">
-														<XMark className="size-4" strokeWidth="1.75" />
-													</div>
-												</button>
-											</Tooltip>
-										{/if}
+											{#each selectedToolChipItems as selectedTool (selectedTool.id)}
+												<Tooltip content={selectedTool.label} placement="top">
+													<button
+														type="button"
+														class="{chipClass} shrink-0"
+														on:click|preventDefault={() => {
+															selectedToolIds = selectedToolIds.filter(
+																(id) => id !== selectedTool.id
+															);
+														}}
+													>
+														<span
+															class="relative flex size-3.5 shrink-0 items-center justify-center"
+														>
+															<span class="flex items-center justify-center group-hover:hidden">
+																<Wrench className="size-3.5" strokeWidth="1.6" />
+															</span>
+															<span class="hidden items-center justify-center group-hover:flex">
+																<XMark className="size-3 opacity-70" />
+															</span>
+														</span>
+														<span class="truncate">{selectedTool.label}</span>
+													</button>
+												</Tooltip>
+											{/each}
 
-										{#if imageGenerationEnabled}
-											<Tooltip content={$i18n.t('Image')} placement="top">
-												<button
-													on:click|preventDefault={() =>
-														(imageGenerationEnabled = !imageGenerationEnabled)}
-													type="button"
-													class="group p-[7px] flex gap-1.5 items-center text-sm rounded-full transition-colors duration-300 focus:outline-hidden max-w-full overflow-hidden {imageGenerationEnabled
-														? ' text-sky-500 dark:text-sky-300 bg-sky-50 hover:bg-sky-100 dark:bg-sky-400/10 dark:hover:bg-sky-700/10 border border-sky-200/40 dark:border-sky-500/20'
-														: 'bg-transparent text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 '}"
-												>
-													<Photo className="size-4" strokeWidth="1.75" />
-													<div class="hidden group-hover:block">
-														<XMark className="size-4" strokeWidth="1.75" />
-													</div>
-												</button>
-											</Tooltip>
-										{/if}
+											{#each selectedFilterIds as filterId (filterId)}
+												{@const filter = toggleFilters.find((f) => f.id === filterId)}
+												{#if filter}
+													<Tooltip content={filter?.name} placement="top">
+														<button
+															type="button"
+															class="{chipClass} shrink-0"
+															on:click|preventDefault={() => {
+																selectedFilterIds = selectedFilterIds.filter(
+																	(id) => id !== filterId
+																);
+															}}
+														>
+															<span
+																class="relative flex size-3.5 shrink-0 items-center justify-center"
+															>
+																<span class="flex items-center justify-center group-hover:hidden">
+																	{#if filter?.icon}
+																		<img
+																			src={filter.icon}
+																			class="size-3 opacity-75 {filter.icon.includes(
+																				'data:image/svg'
+																			)
+																				? 'dark:invert-[80%]'
+																				: ''}"
+																			style="fill: currentColor;"
+																			alt={filter.name}
+																		/>
+																	{:else}
+																		<Sparkles className="size-3.5" strokeWidth="1.6" />
+																	{/if}
+																</span>
+																<span class="hidden items-center justify-center group-hover:flex">
+																	<XMark className="size-3 opacity-70" />
+																</span>
+															</span>
+															<span class="truncate capitalize">{filter.name}</span>
+														</button>
+													</Tooltip>
+												{/if}
+											{/each}
 
-										{#if codeInterpreterEnabled}
-											<Tooltip content={$i18n.t('Code Interpreter')} placement="top">
-												<button
-													aria-label={codeInterpreterEnabled
-														? $i18n.t('Disable Code Interpreter')
-														: $i18n.t('Enable Code Interpreter')}
-													aria-pressed={codeInterpreterEnabled}
-													on:click|preventDefault={() =>
-														(codeInterpreterEnabled = !codeInterpreterEnabled)}
-													type="button"
-													class=" group p-[7px] flex gap-1.5 items-center text-sm transition-colors duration-300 max-w-full overflow-hidden {codeInterpreterEnabled
-														? ' text-sky-500 dark:text-sky-300 bg-sky-50 hover:bg-sky-100 dark:bg-sky-400/10 dark:hover:bg-sky-700/10 border border-sky-200/40 dark:border-sky-500/20'
-														: 'bg-transparent text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 '} {($settings?.highContrastMode ??
-													false)
-														? 'm-1'
-														: 'focus:outline-hidden rounded-full'}"
-												>
-													<Terminal className="size-3.5" strokeWidth="2" />
+											{#if webSearchEnabled}
+												<Tooltip content={$i18n.t('Web Search')} placement="top">
+													<button
+														type="button"
+														class="{chipClass} shrink-0"
+														on:click|preventDefault={() => {
+															webSearchEnabled = false;
+														}}
+													>
+														<span
+															class="relative flex size-3.5 shrink-0 items-center justify-center"
+														>
+															<span class="flex items-center justify-center group-hover:hidden">
+																<GlobeAlt className="size-3.5" strokeWidth="1.6" />
+															</span>
+															<span class="hidden items-center justify-center group-hover:flex">
+																<XMark className="size-3 opacity-70" />
+															</span>
+														</span>
+														<span class="truncate">{$i18n.t('Web Search')}</span>
+													</button>
+												</Tooltip>
+											{/if}
 
-													<div class="hidden group-hover:block">
-														<XMark className="size-4" strokeWidth="1.75" />
-													</div>
-												</button>
-											</Tooltip>
-										{/if}
+											{#if imageGenerationEnabled}
+												<Tooltip content={$i18n.t('Image')} placement="top">
+													<button
+														type="button"
+														class="{chipClass} shrink-0"
+														on:click|preventDefault={() => {
+															imageGenerationEnabled = false;
+														}}
+													>
+														<span
+															class="relative flex size-3.5 shrink-0 items-center justify-center"
+														>
+															<span class="flex items-center justify-center group-hover:hidden">
+																<Photo className="size-3.5" strokeWidth="1.6" />
+															</span>
+															<span class="hidden items-center justify-center group-hover:flex">
+																<XMark className="size-3 opacity-70" />
+															</span>
+														</span>
+														<span class="truncate">{$i18n.t('Image')}</span>
+													</button>
+												</Tooltip>
+											{/if}
 
-										{#each pendingOAuthTools as pendingTool (pendingTool.id)}
-											<Tooltip content={$i18n.t('Click to connect')} placement="top">
-												<button
-													on:click|preventDefault={() => {
-														sessionStorage.setItem('pendingOAuthToolId', pendingTool.id);
-														const authUrl = getOAuthClientAuthorizationUrl(
-															pendingTool.serverId,
-															pendingTool.authType ?? 'mcp'
-														);
-														window.open(authUrl, '_self', 'noopener');
-													}}
-													type="button"
-													class="group px-2 py-[5px] flex gap-1.5 items-center text-xs rounded-full transition-colors duration-300 focus:outline-hidden max-w-full overflow-hidden
-														text-amber-600 dark:text-amber-400 bg-amber-50 hover:bg-amber-100 dark:bg-amber-400/10 dark:hover:bg-amber-600/10 border border-amber-200/40 dark:border-amber-500/20"
-												>
-													<Wrench className="size-3.5" strokeWidth="1.75" />
-													<span class="truncate">{pendingTool.name}</span>
-												</button>
-											</Tooltip>
-										{/each}
-									</div>
+											{#if codeInterpreterEnabled}
+												<Tooltip content={$i18n.t('Code Interpreter')} placement="top">
+													<button
+														type="button"
+														class="{chipClass} shrink-0"
+														aria-label={codeInterpreterEnabled
+															? $i18n.t('Disable Code Interpreter')
+															: $i18n.t('Enable Code Interpreter')}
+														aria-pressed={codeInterpreterEnabled}
+														on:click|preventDefault={() => {
+															codeInterpreterEnabled = false;
+														}}
+													>
+														<span
+															class="relative flex size-3.5 shrink-0 items-center justify-center"
+														>
+															<span class="flex items-center justify-center group-hover:hidden">
+																<Terminal className="size-3.5" strokeWidth="1.6" />
+															</span>
+															<span class="hidden items-center justify-center group-hover:flex">
+																<XMark className="size-3 opacity-70" />
+															</span>
+														</span>
+														<span class="truncate">{$i18n.t('Code Interpreter')}</span>
+													</button>
+												</Tooltip>
+											{/if}
+
+											{#each pendingOAuthTools as pendingTool (pendingTool.id)}
+												<Tooltip content={$i18n.t('Click to connect')} placement="top">
+													<button
+														on:click|preventDefault={() => {
+															sessionStorage.setItem('pendingOAuthToolId', pendingTool.id);
+															const authUrl = getOAuthClientAuthorizationUrl(
+																pendingTool.serverId,
+																pendingTool.authType ?? 'mcp'
+															);
+															window.open(authUrl, '_self', 'noopener');
+														}}
+														type="button"
+														class="inline-flex max-w-full shrink-0 items-center gap-2 rounded-full border border-amber-200/60 bg-amber-50/90 px-2.5 py-1 text-xs font-medium text-amber-700 transition-colors duration-150 hover:bg-amber-100 dark:border-amber-500/20 dark:bg-amber-400/10 dark:text-amber-300 dark:hover:bg-amber-500/15"
+													>
+														<Wrench className="size-3.5" strokeWidth="1.6" />
+														<span class="truncate">{pendingTool.name}</span>
+													</button>
+												</Tooltip>
+											{/each}
+										</div>
+									{/if}
 								</div>
 
 								<div class="self-end flex space-x-1 mr-1 shrink-0 gap-[0.5px]">
@@ -2084,7 +2171,7 @@
 								{@html DOMPurify.sanitize(marked($config?.license_metadata?.input_footer))}
 							</div>
 						{:else}
-							<div class="mb-1" />
+							<div class="mb-1"></div>
 						{/if}
 					</form>
 				</div>
