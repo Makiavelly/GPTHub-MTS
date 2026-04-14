@@ -852,6 +852,10 @@
 								/>
 							{/if}
 
+							{#if message.content !== '' && !message.done && !message.error}
+								<Skeleton size="md" />
+							{/if}
+
 							{#if message?.error}
 								<Error content={message?.error?.content ?? message.content} />
 							{/if}
