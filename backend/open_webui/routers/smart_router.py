@@ -365,7 +365,12 @@ def _plan_lines(tasks: list) -> list[str]:
         # Mark intermediate tasks visually
         intermediate = t['id'] in dep_ids and t['type'] in INTERMEDIATE_TYPES
         prefix = '  ' if intermediate else ''
-        lines.append(f'{prefix}- `{display}` — {label}{dep_str}\n')
+        # For web_search: show the query-rewriting step as a preceding sub-task
+        if t['type'] == 'web_search':
+            lines.append(f'  - `{MODEL_REGISTRY["text"]}` — формирование поискового запроса\n')
+            lines.append(f'{prefix}- `{display}` — {label} | на основе: формирование запроса{dep_str}\n')
+        else:
+            lines.append(f'{prefix}- `{display}` — {label}{dep_str}\n')
     lines.append('\n---\n\n')
     return lines
 
@@ -472,9 +477,14 @@ async def stream_route(payload: dict, api_key: str, user_id: str = ''):
 
         remaining = [t for t in remaining if t not in ready]
 
-    # Show only leaf results — tasks whose output is not consumed by other tasks
+    # Show leaf results (not consumed by other tasks) + always show image_generation
+    # results even if another task depends on them — the user always expects to see
+    # the generated image regardless of whether a follow-up text task references it.
     dep_ids = {d for t in tasks for d in t.get('depends_on', [])}
-    leaf_results = [r for r in results if r['id'] not in dep_ids]
-    body = '\n\n---\n\n'.join(r['content'] for r in leaf_results)
+    visible_results = sorted(
+        [r for r in results if r['id'] not in dep_ids or r.get('task_type') == 'image_generation'],
+        key=lambda r: r['id'],
+    )
+    body = '\n\n---\n\n'.join(r['content'] for r in visible_results)
     yield _sse_chunk(body)
     yield _sse_done()
