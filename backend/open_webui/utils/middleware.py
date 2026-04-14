@@ -919,7 +919,7 @@ def apply_source_context_to_messages(
     document body — useful when the content is already present elsewhere
     (e.g. in a tool result message) and only citation markers are needed.
     """
-    if not sources or not user_message:
+    if not sources:
         return messages
 
     context = get_source_context(sources, include_content=include_content)
@@ -2803,7 +2803,8 @@ async def process_chat_payload(request, form_data, user, metadata, model):
     metadata['sources'] = sources[:] if sources else []
 
     # If context is not empty, insert it into the messages
-    if sources and prompt:
+    # Note: prompt may be empty when user sends only a file — inject context anyway
+    if sources:
         form_data['messages'] = apply_source_context_to_messages(request, form_data['messages'], sources, prompt)
 
     # If there are citations, add them to the data_items

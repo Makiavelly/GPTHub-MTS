@@ -310,6 +310,23 @@ def _get_user_memories(user_id: str) -> str:
         return ''
 
 
+def _extract_rag_context(original_messages: list) -> str:
+    """Extract the <context>...</context> block injected by the OpenWebUI RAG pipeline.
+
+    Returns the raw text inside the tags, or empty string if not present.
+    Used to re-inject file/audio context into tasks that rebuild their own messages
+    (dependent tasks and image_generation) instead of forwarding original_messages.
+    """
+    last_user = next((m for m in reversed(original_messages) if m.get('role') == 'user'), None)
+    if not last_user:
+        return ''
+    content = last_user.get('content', '')
+    if isinstance(content, list):
+        content = '\n'.join(p.get('text', '') for p in content if p.get('type') == 'text')
+    m = re.search(r'<context>(.*?)</context>', content, re.DOTALL)
+    return m.group(1).strip() if m else ''
+
+
 async def _execute_task(
     task: dict,
     context: dict,
@@ -328,6 +345,9 @@ async def _execute_task(
 
     log.info(f'[smart_router] task id={task["id"]} final prompt: {prompt!r}')
 
+    # Extract RAG context — used for dependent tasks that rebuild their messages
+    rag_context = _extract_rag_context(original_messages)
+
     if task_type == 'web_search':
         search_query = await _rewrite_search_query(prompt, original_messages, api_key)
         content = await _run_web_search(search_query)
@@ -338,6 +358,9 @@ async def _execute_task(
         return {'id': task['id'], 'type': 'text', 'task_type': task_type, 'model': 'web', 'content': content}
 
     if task_type == 'image_generation':
+        # No direct context injection — when a file is attached the decomposer creates
+        # a text→image_generation chain; the text model writes the visual prompt and
+        # its output arrives here via "Context from previous step:" in the prompt.
         content = await _run_image_generation(prompt, api_key)
         return {'id': task['id'], 'type': 'image', 'task_type': task_type, 'model': model, 'content': content}
 
@@ -352,8 +375,11 @@ async def _execute_task(
     else:
         # Task depends on other tasks (e.g. text summarising web_search output),
         # or is a vlm task that needs image parts explicitly attached.
+        # Re-inject RAG context so the model still sees file/audio material even
+        # though we're rebuilding the user message from scratch.
         history = [m for m in original_messages if m.get('role') in ('system', 'assistant')]
-        user_msg: dict = {'role': 'user', 'content': prompt}
+        user_content = f'<context>\n{rag_context}\n</context>\n\n{prompt}' if rag_context else prompt
+        user_msg: dict = {'role': 'user', 'content': user_content}
 
         # For vlm: carry the image parts from the original user message
         if task_type == 'vlm':
@@ -363,7 +389,7 @@ async def _execute_task(
                 if isinstance(orig_content, list):
                     image_parts = [p for p in orig_content if p.get('type') == 'image_url']
                     if image_parts:
-                        user_msg['content'] = [{'type': 'text', 'text': prompt}] + image_parts
+                        user_msg['content'] = [{'type': 'text', 'text': user_content}] + image_parts
 
         messages = history + [user_msg]
 
@@ -504,7 +530,7 @@ async def stream_route(payload: dict, api_key: str, user_id: str = ''):
     # Use a sensible default so the decomposer doesn't hallucinate,
     # and the execution model (which receives full original_messages with the
     # transcription/file context) knows to describe the attached content.
-    if not clean_text and '<context>' in user_text:
+    if (not clean_text or clean_text.startswith('###')) and '<context>' in user_text:
         clean_text = 'Проанализируй и опиши содержимое прикреплённого файла'
 
     log.info(f'[smart_router] clean decompose text: {clean_text!r}')
@@ -556,14 +582,22 @@ async def stream_route(payload: dict, api_key: str, user_id: str = ''):
 
         remaining = [t for t in remaining if t not in ready]
 
-    # Show leaf results (not consumed by other tasks) + always show image_generation
-    # results even if another task depends on them — the user always expects to see
-    # the generated image regardless of whether a follow-up text task references it.
+    # Build output: leaf results shown normally, intermediate results (dep_ids)
+    # shown collapsed in <details> so reasoning/analysis steps are available but
+    # don't clutter the main response. image_generation is always shown as a leaf.
     dep_ids = {d for t in tasks for d in t.get('depends_on', [])}
-    visible_results = sorted(
-        [r for r in results if r['id'] not in dep_ids or r.get('task_type') == 'image_generation'],
-        key=lambda r: r['id'],
-    )
-    body = '\n\n---\n\n'.join(r['content'] for r in visible_results)
+    all_sorted = sorted(results, key=lambda r: r['id'])
+
+    parts = []
+    for r in all_sorted:
+        is_intermediate = r['id'] in dep_ids and r.get('task_type') != 'image_generation'
+        if is_intermediate:
+            model_name = r.get('model', '?')
+            label = TASK_LABELS.get(r.get('task_type', ''), r.get('task_type', '?'))
+            parts.append(f'<details>\n<summary>{label} ({model_name})</summary>\n\n{r["content"]}\n\n</details>')
+        else:
+            parts.append(r['content'])
+
+    body = '\n\n---\n\n'.join(parts)
     yield _sse_chunk(body)
     yield _sse_done()
