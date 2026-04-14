@@ -3,11 +3,25 @@ from open_webui.utils.misc import (
     deep_update,
     add_or_update_system_message,
     replace_system_message_content,
+    get_content_from_message,
+    get_last_user_message_item,
+    get_system_message,
 )
 
 from typing import Callable, Optional
 import copy
 import json
+
+
+GFM_RESPONSE_FORMATTING_PROMPT = """Formatting requirements for normal user-facing answers:
+- Use GitHub Flavored Markdown (GFM) for formatted responses.
+- Treat the GitHub Flavored Markdown specification as the canonical syntax reference: https://github.github.com/gfm/
+- Use the GitHub "Mastering Markdown" guide as a practical reference for common patterns and examples: https://guides.github.com/features/mastering-markdown/
+- Use real Markdown formatting so the chat UI renders headings, emphasis, lists, tables, links, blockquotes, and task lists instead of showing raw markup.
+- Format code in fenced code blocks and include an appropriate language tag when it is known.
+- Keep Markdown readable and purposeful; do not wrap the whole answer in a single code block unless the user explicitly asks for raw source text.
+- If the user explicitly requests another format, or the task requires strict JSON, XML, plain text, or code-only output, follow that requirement instead of Markdown formatting.
+"""
 
 
 # What goes out cannot be taken back. Let it be shaped
@@ -37,6 +51,40 @@ def apply_system_prompt_to_body(
     else:
         form_data['messages'] = add_or_update_system_message(system, form_data.get('messages', []))
 
+    return form_data
+
+
+def should_apply_response_formatting_prompt(form_data: dict) -> bool:
+    response_format = form_data.get('response_format')
+    if isinstance(response_format, dict) and response_format.get('type') in {'json_schema', 'json_object'}:
+        return False
+
+    last_user_message = get_last_user_message_item(form_data.get('messages', []))
+    last_user_text = (get_content_from_message(last_user_message) or '').strip()
+    if last_user_text.startswith('### Task:'):
+        return False
+
+    return True
+
+
+def apply_response_formatting_prompt_to_body(form_data: dict) -> dict:
+    if not should_apply_response_formatting_prompt(form_data):
+        return form_data
+
+    existing_system_message = get_system_message(form_data.get('messages', []))
+    existing_system_content = (
+        get_content_from_message(existing_system_message) if existing_system_message else ''
+    ) or ''
+
+    if GFM_RESPONSE_FORMATTING_PROMPT in existing_system_content:
+        return form_data
+
+    system_content = (
+        f'{existing_system_content.rstrip()}\n\n{GFM_RESPONSE_FORMATTING_PROMPT}'.strip()
+        if existing_system_content
+        else GFM_RESPONSE_FORMATTING_PROMPT
+    )
+    form_data['messages'] = add_or_update_system_message(system_content, form_data.get('messages', []))
     return form_data
 
 

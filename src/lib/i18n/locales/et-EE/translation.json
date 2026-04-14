@@ -28,7 +28,6 @@
 	"{{COUNT}}y_time_ago": "{{COUNT}}a tagasi",
 	"{{LOCALIZED_DATE}} at {{LOCALIZED_TIME}}": "{{LOCALIZED_DATE}} kell {{LOCALIZED_TIME}}",
 	"{{model}} download has been canceled": "{{model}} allalaadimine on tühistatud",
-	"{{modelName}} profile image": "{{modelName}} profiilipilt",
 	"{{NAMES}} reacted with {{REACTION}}": "{{NAMES}} reageerisid reaktsiooniga {{REACTION}}",
 	"{{user}}'s Chats": "{{user}} vestlused",
 	"{{webUIName}} Backend Required": "{{webUIName}} taustaserver on vajalik",

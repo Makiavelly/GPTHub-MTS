@@ -28,7 +28,6 @@
 	"{{COUNT}}y_time_ago": "",
 	"{{LOCALIZED_DATE}} at {{LOCALIZED_TIME}}": "{{LOCALIZED_DATE}} {{LOCALIZED_TIME}}",
 	"{{model}} download has been canceled": "{{model}} lataus peruttu",
-	"{{modelName}} profile image": "{{modelName}} profiilikuva",
 	"{{NAMES}} reacted with {{REACTION}}": "{{NAMES}} reagoi {{REACTION}}",
 	"{{user}}'s Chats": "{{user}}:n keskustelut",
 	"{{webUIName}} Backend Required": "{{webUIName}}-backend vaaditaan",

@@ -28,7 +28,6 @@
 	"{{COUNT}}y_time_ago": "",
 	"{{LOCALIZED_DATE}} at {{LOCALIZED_TIME}}": "{{LOCALIZED_DATE}} დრო {{LOCALIZED_TIME}}",
 	"{{model}} download has been canceled": "{{model}} მოდელი გაუქმდა",
-	"{{modelName}} profile image": "",
 	"{{NAMES}} reacted with {{REACTION}}": "",
 	"{{user}}'s Chats": "{{user}}-ის ჩათები",
 	"{{webUIName}} Backend Required": "{{webUIName}} საჭიროა უკანაბოლო",

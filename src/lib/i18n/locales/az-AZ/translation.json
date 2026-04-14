@@ -28,7 +28,6 @@
 	"{{COUNT}}y_time_ago": "{{COUNT}} il əvvəl",
 	"{{LOCALIZED_DATE}} at {{LOCALIZED_TIME}}": "{{LOCALIZED_DATE}}, saat {{LOCALIZED_TIME}}",
 	"{{model}} download has been canceled": "{{model}} yüklənməsi ləğv edildi",
-	"{{modelName}} profile image": "{{modelName}} profil şəkli",
 	"{{NAMES}} reacted with {{REACTION}}": "{{NAMES}}, {{REACTION}} ilə reaksiya verdi",
 	"{{user}}'s Chats": "{{user}} adlı istifadəçinin söhbətləri",
 	"{{webUIName}} Backend Required": "{{webUIName}} üçün Backend tələb olunur",

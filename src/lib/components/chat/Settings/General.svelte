@@ -131,10 +131,18 @@
 		}
 
 		if (themeToApply === 'dark' && !_theme.includes('oled')) {
-			document.documentElement.style.setProperty('--color-gray-800', '#333');
-			document.documentElement.style.setProperty('--color-gray-850', '#262626');
-			document.documentElement.style.setProperty('--color-gray-900', '#171717');
-			document.documentElement.style.setProperty('--color-gray-950', '#0d0d0d');
+			document.documentElement.style.setProperty('--color-gray-950', '#0b0d14');
+			document.documentElement.style.setProperty('--color-gray-900', '#11131d');
+			document.documentElement.style.setProperty('--color-gray-850', '#161927');
+			document.documentElement.style.setProperty('--color-gray-800', '#1c1f2e');
+			document.documentElement.style.setProperty('--color-gray-700', '#252a3d');
+			document.documentElement.style.setProperty('--color-gray-600', '#353b54');
+			document.documentElement.style.setProperty('--color-gray-500', '#555e7d');
+			document.documentElement.style.setProperty('--color-gray-400', '#7b85a3');
+			document.documentElement.style.setProperty('--color-gray-300', '#a8b0c8');
+			document.documentElement.style.setProperty('--color-gray-200', '#cdd2e4');
+			document.documentElement.style.setProperty('--color-gray-100', '#eef0f7');
+			document.documentElement.style.setProperty('--color-gray-50', '#f7f8fc');
 		}
 
 		themes

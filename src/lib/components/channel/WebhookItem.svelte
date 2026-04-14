@@ -90,7 +90,7 @@
 		on:click={onClick}
 	>
 		<img
-			src={image || `${WEBUI_BASE_URL}/static/favicon.png`}
+			src={image || `${WEBUI_BASE_URL}/favicon.png`}
 			class="rounded-full size-8 object-cover flex-shrink-0"
 			alt=""
 		/>
@@ -123,11 +123,7 @@
 					class="shrink-0 rounded-xl overflow-hidden hover:opacity-80 transition"
 					on:click={() => filesInputElement.click()}
 				>
-					<img
-						src={image || `${WEBUI_BASE_URL}/static/favicon.png`}
-						class="size-8 object-cover"
-						alt=""
-					/>
+					<img src={image || `${WEBUI_BASE_URL}/favicon.png`} class="size-8 object-cover" alt="" />
 				</button>
 				<div class="flex-1">
 					<div class=" text-gray-500 text-xs">{$i18n.t('Name')}</div>

@@ -33,12 +33,40 @@
 /* --app-text-scale is updated via the UI Scale slider (Interface.svelte) */
 :root {
 	--app-text-scale: 1;
+	--font-sans: 'Golos Text', sans-serif;
+	--color-blue-700: #1d4ed8;
+	--color-blue-600: #2563eb;
+	--color-blue-500: #3b82f6;
+	--color-blue-400: #60a5fa;
+}
+
+html.dark {
+	--color-gray-950: #0b0d14;
+	--color-gray-900: #11131d;
+	--color-gray-850: #161927;
+	--color-gray-800: #1c1f2e;
+	--color-gray-700: #252a3d;
+	--color-gray-600: #353b54;
+	--color-gray-500: #555e7d;
+	--color-gray-400: #7b85a3;
+	--color-gray-300: #a8b0c8;
+	--color-gray-200: #cdd2e4;
+	--color-gray-100: #eef0f7;
+	--color-gray-50: #f7f8fc;
 }
 
 html {
 	word-break: break-word;
 	/* font-size scales the entire document via the same UI control */
 	font-size: calc(1rem * var(--app-text-scale, 1));
+}
+
+body,
+button,
+input,
+textarea,
+select {
+	font-family: var(--font-sans);
 }
 
 #sidebar-chat-item {
@@ -119,7 +147,7 @@ textarea::placeholder {
 }
 
 .font-primary {
-	font-family: 'Archivo', 'Vazirmatn', sans-serif;
+	font-family: var(--font-sans);
 }
 
 .drag-region {

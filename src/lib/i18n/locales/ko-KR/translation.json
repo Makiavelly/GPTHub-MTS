@@ -27,7 +27,6 @@
 	"{{COUNT}}y_time_ago": "",
 	"{{LOCALIZED_DATE}} at {{LOCALIZED_TIME}}": "",
 	"{{model}} download has been canceled": "{{model}} 다운로드가 취소되었습니다.",
-	"{{modelName}} profile image": "",
 	"{{NAMES}} reacted with {{REACTION}}": "",
 	"{{user}}'s Chats": "{{user}}의 채팅",
 	"{{webUIName}} Backend Required": "{{webUIName}} 백엔드가 필요합니다.",

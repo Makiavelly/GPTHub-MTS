@@ -55,6 +55,7 @@ from open_webui.utils.misc import (
 from open_webui.utils.payload import (
     apply_model_params_to_body_ollama,
     apply_model_params_to_body_openai,
+    apply_response_formatting_prompt_to_body,
     apply_system_prompt_to_body,
 )
 from open_webui.utils.auth import get_admin_user, get_verified_user
@@ -1309,6 +1310,9 @@ async def generate_chat_completion(
                 detail='Model not found',
             )
 
+    if not bypass_system_prompt:
+        payload = apply_response_formatting_prompt_to_body(payload)
+
     url, url_idx = await get_ollama_url(request, payload['model'], url_idx)
     api_config = request.app.state.config.OLLAMA_API_CONFIGS.get(
         str(url_idx),
@@ -1503,6 +1507,8 @@ async def generate_openai_chat_completion(
                 status_code=403,
                 detail='Model not found',
             )
+
+    payload = apply_response_formatting_prompt_to_body(payload)
 
     url, url_idx = await get_ollama_url(request, payload['model'], url_idx)
     api_config = request.app.state.config.OLLAMA_API_CONFIGS.get(

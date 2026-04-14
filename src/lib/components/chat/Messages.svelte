@@ -19,6 +19,7 @@
 	import Message from './Messages/Message.svelte';
 	import Loader from '../common/Loader.svelte';
 	import Spinner from '../common/Spinner.svelte';
+	import UserMessageQuickNav from './UserMessageQuickNav.svelte';
 
 	import ChatPlaceholder from './ChatPlaceholder.svelte';
 
@@ -496,6 +497,7 @@
 						{/each}
 					</ul>
 				</section>
+				<UserMessageQuickNav {messages} />
 				<div class="pb-18" />
 				{#if bottomPadding}
 					<div class="  pb-6" />
