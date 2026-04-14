@@ -64,6 +64,7 @@ from open_webui.tools.builtin import (
     replace_memory_content,
     delete_memory,
     list_memories,
+    search_chat_history,
     get_current_timestamp,
     calculate_timestamp,
     search_notes,
@@ -449,6 +450,14 @@ def get_builtin_tools(
                 list_memories,
             ]
         )
+
+    # Add chat history search tool if builtin category enabled AND enabled globally
+    if (
+        is_builtin_tool_enabled('chat_history')
+        and getattr(request.app.state.config, 'ENABLE_CHAT_HISTORY_SEARCH', True)
+        and get_model_capability('chat_history')
+    ):
+        builtin_functions.append(search_chat_history)
 
     # Add web search tools if builtin category enabled AND enabled globally AND model has web_search capability
     if (

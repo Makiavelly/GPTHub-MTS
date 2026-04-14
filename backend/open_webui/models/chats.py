@@ -423,6 +423,35 @@ class ChatTable:
 
             return ChatModel.model_validate(chat)
 
+    def update_warm_summary(self, chat_id: str, summary: str, msg_count: int) -> bool:
+        """Persist warm layer summary and message count into chat.meta."""
+        try:
+            with get_db_context() as db:
+                chat = db.get(Chat, chat_id)
+                if chat is None:
+                    return False
+                chat.meta = {
+                    **(chat.meta or {}),
+                    'warm_summary': summary,
+                    'warm_summary_msg_count': msg_count,
+                }
+                db.commit()
+                return True
+        except Exception:
+            return False
+
+    def get_warm_summary(self, chat_id: str) -> tuple:
+        """Return (summary_text, msg_count_when_summarized) from chat.meta."""
+        try:
+            with get_db_context() as db:
+                result = db.query(Chat.meta).filter_by(id=chat_id).first()
+                if result is None:
+                    return None, 0
+                meta = result[0] or {}
+                return meta.get('warm_summary'), meta.get('warm_summary_msg_count', 0)
+        except Exception:
+            return None, 0
+
     def get_chat_title_by_id(self, id: str) -> Optional[str]:
         with get_db_context() as db:
             result = db.query(Chat.title).filter_by(id=id).first()

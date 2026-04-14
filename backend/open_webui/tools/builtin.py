@@ -8,6 +8,7 @@ IMPORTANT: DO NOT IMPORT THIS MODULE DIRECTLY IN OTHER PARTS OF THE CODEBASE.
 
 import json
 import logging
+import math
 import time
 import asyncio
 from typing import Optional
@@ -698,6 +699,256 @@ async def list_memories(
             return json.dumps([])
     except Exception as e:
         log.exception(f'list_memories error: {e}')
+        return json.dumps({'error': str(e)})
+
+
+# =============================================================================
+# CHAT HISTORY SEARCH TOOLS
+# =============================================================================
+
+# Half-life for importance decay: messages not accessed for this many days lose
+# half their boosted importance. 30 days preserves technical decisions long enough.
+_IMPORTANCE_DECAY_HALF_LIFE_DAYS = 30.0
+
+_QUERY_REWRITE_PROMPT = """\
+You are a search query rewriter for a semantic vector search over past conversation messages.
+
+Given a user's question or statement about something from the conversation history, \
+rewrite it as one or more concrete, specific search queries that will retrieve the \
+right messages via embedding similarity.
+
+Rules:
+- Make implicit references explicit: "that task" → "задача по сортировке массива"
+- Include key entities: names, technologies, decisions, errors, file paths
+- If the question asks about two independent topics, split with " || " separator
+- Use the same language as the input query
+- Respond with ONLY the rewritten query (or queries), nothing else
+
+Input: {query}
+Rewritten:"""
+
+
+async def _rewrite_query_for_search(
+    query: str,
+    request: Request,
+    user,
+) -> list[str]:
+    """
+    Rewrite a natural-language query into one or more concrete search terms.
+    Returns a list of query strings (split on ' || ' for compound queries).
+    Falls back to the original query on any error.
+    """
+    if not request or not request.app.state:
+        return [query]
+    try:
+        from open_webui.utils.chat import generate_chat_completion
+        from open_webui.utils.task import get_task_model_id
+
+        models = request.app.state.MODELS
+        # Prefer the task model (usually faster / cheaper)
+        model_id = next(iter(models), '') if models else ''
+        task_model_id = get_task_model_id(
+            model_id,
+            request.app.state.config.TASK_MODEL,
+            request.app.state.config.TASK_MODEL_EXTERNAL,
+            models,
+        )
+        if task_model_id not in models:
+            task_model_id = model_id
+        if not task_model_id:
+            return [query]
+
+        result = await generate_chat_completion(
+            request,
+            {
+                'model': task_model_id,
+                'messages': [
+                    {'role': 'user', 'content': _QUERY_REWRITE_PROMPT.format(query=query)}
+                ],
+                'stream': False,
+                'max_completion_tokens': 120,
+                'temperature': 0.0,
+                'metadata': {'task': 'query_rewriting'},
+            },
+            user,
+        )
+        if result and isinstance(result, dict):
+            rewritten = (
+                result.get('choices', [{}])[0]
+                .get('message', {})
+                .get('content', '')
+                .strip()
+            )
+            if rewritten:
+                parts = [p.strip() for p in rewritten.split('||') if p.strip()]
+                return parts if parts else [query]
+    except Exception as e:
+        log.debug(f'_rewrite_query_for_search failed: {e}')
+    return [query]
+
+
+def _decayed_importance(meta: dict) -> float:
+    """
+    Compute time-decayed importance for a cold-layer message.
+
+    importance_stored × exp(−λ × days_since_last_access)
+    where λ = ln(2) / half_life_days  (exponential decay with configured half-life)
+    """
+    base = float(meta.get('importance', 0.5))
+    last_accessed = meta.get('last_accessed_at') or meta.get('timestamp') or time.time()
+    days_since = (time.time() - float(last_accessed)) / 86400.0
+    decay = math.exp(-0.693 * days_since / _IMPORTANCE_DECAY_HALF_LIFE_DAYS)
+    return base * decay
+
+
+async def search_chat_history(
+    query: str,
+    count: int = 5,
+    __chat_id__: str = None,
+    __request__: Request = None,
+    __user__: dict = None,
+    __event_emitter__: callable = None,
+) -> str:
+    """
+    Search the current conversation history for relevant messages.
+
+    Pipeline:
+    1. Query rewriting — turns vague references into concrete search terms.
+    2. Compound splitting — "X and Y?" becomes two parallel searches.
+    3. Vector search in the per-chat ChromaDB collection (cold layer).
+    4. Re-ranking: combined score = similarity * 0.65 + decayed_importance * 0.35
+       (higher is better; similarity = 1 − distance, clamped to [0, 1]).
+    5. Importance update — boosts access_count and records last_accessed_at for hits.
+
+    :param query: Natural-language question about something from conversation history
+    :param count: Number of messages to return (default 5)
+    :return: JSON array of matching messages with timestamps and roles
+    """
+    if __request__ is None or __chat_id__ is None:
+        return json.dumps({'error': 'Request or chat context not available'})
+
+    async def _emit(description: str, done: bool, *, error: bool = False):
+        if __event_emitter__:
+            payload = {
+                'type': 'status',
+                'data': {
+                    'action': 'chat_history_search',
+                    'description': description,
+                    'done': done,
+                },
+            }
+            if error:
+                payload['data']['error'] = True
+            await __event_emitter__(payload)
+
+    try:
+        user = UserModel(**__user__) if __user__ else None
+        collection_name = f'chat-{__chat_id__}'
+
+        # Step 1+2: rewrite + split
+        await _emit('Rewriting search query…', False)
+        sub_queries = await _rewrite_query_for_search(query, __request__, user)
+        log.debug(f'search_chat_history: original={query!r} → rewritten={sub_queries}')
+
+        # Step 3: vector searches for each sub-query
+        # Fetch count*2 candidates per sub-query to leave room for re-ranking
+        fetch_limit = max(count * 2, 8)
+        candidates: dict[str, tuple[str, dict, float]] = {}  # id → (doc, meta, raw_distance)
+
+        await _emit(
+            f'Searching conversation history ({len(sub_queries)} quer{"y" if len(sub_queries) == 1 else "ies"})…',
+            False,
+        )
+        for sq in sub_queries:
+            try:
+                vec = await __request__.app.state.EMBEDDING_FUNCTION(sq, user=user)
+                results = VECTOR_DB_CLIENT.search(
+                    collection_name=collection_name,
+                    vectors=[vec],
+                    limit=fetch_limit,
+                )
+                if not (results and hasattr(results, 'documents') and results.documents):
+                    continue
+
+                hit_ids   = results.ids[0]       if results.ids       else []
+                hit_docs  = results.documents[0] if results.documents else []
+                hit_metas = results.metadatas[0] if results.metadatas else []
+                hit_dists = (
+                    results.distances[0]
+                    if (hasattr(results, 'distances') and results.distances)
+                    else []
+                )
+
+                for i, doc in enumerate(hit_docs):
+                    mid  = hit_ids[i]   if i < len(hit_ids)   else None
+                    meta = hit_metas[i] if i < len(hit_metas) else {}
+                    dist = float(hit_dists[i]) if i < len(hit_dists) else 1.0
+                    if mid and mid not in candidates:
+                        candidates[mid] = (doc, meta, dist)
+            except Exception as e:
+                log.debug(f'search_chat_history: sub-query "{sq}" failed: {e}')
+
+        if not candidates:
+            await _emit('No matching messages found', True)
+            return json.dumps([])
+
+        # Step 4: re-rank by combined score (higher = better)
+        #   similarity = 1 − distance, clamped to [0, 1]
+        #   score = similarity * 0.65 + decayed_importance * 0.35
+        ranked = sorted(
+            candidates.items(),
+            key=lambda kv: (
+                max(0.0, 1.0 - kv[1][2]) * 0.65
+                + _decayed_importance(kv[1][1]) * 0.35
+            ),
+            reverse=True,   # higher score = better match
+        )
+        top = ranked[:count]
+
+        # Step 5: build result + update importance for hits
+        now = int(time.time())
+        messages = []
+        for msg_id, (doc, meta, _dist) in top:
+            timestamp = 'Unknown'
+            if meta.get('timestamp'):
+                timestamp = time.strftime(
+                    '%Y-%m-%d %H:%M:%S', time.localtime(meta['timestamp'])
+                )
+            messages.append({
+                'id':        msg_id,
+                'timestamp': timestamp,
+                'role':      meta.get('role', 'unknown'),
+                'content':   doc,
+            })
+
+            # Boost importance on retrieval — best-effort, must not block result
+            try:
+                new_access = int(meta.get('access_count', 0)) + 1
+                new_importance = min(1.0, 0.5 + math.log1p(new_access) * 0.1)
+                VECTOR_DB_CLIENT.upsert(
+                    collection_name=collection_name,
+                    items=[{
+                        'id':     msg_id,
+                        'text':   doc,
+                        'vector': await __request__.app.state.EMBEDDING_FUNCTION(doc, user=user),
+                        'metadata': {
+                            **meta,
+                            'access_count':     new_access,
+                            'importance':       new_importance,
+                            'last_accessed_at': now,
+                        },
+                    }],
+                )
+            except Exception:
+                pass
+
+        await _emit(f'Found {len(messages)} message{"" if len(messages) == 1 else "s"}', True)
+        return json.dumps(messages, ensure_ascii=False)
+
+    except Exception as e:
+        log.exception(f'search_chat_history error: {e}')
+        if __event_emitter__:
+            await _emit('Error searching conversation history', True, error=True)
         return json.dumps({'error': str(e)})
 
 

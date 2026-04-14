@@ -2,9 +2,9 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 import logging
 import asyncio
-from typing import Optional
+from typing import Optional, List
 
-from open_webui.models.memories import Memories, MemoryModel
+from open_webui.models.memories import Memories, MemoryModel, MemoryProfiles, MemoryProfileModel
 from open_webui.retrieval.vector.factory import VECTOR_DB_CLIENT
 from open_webui.utils.auth import get_verified_user
 from open_webui.internal.db import get_session
@@ -82,20 +82,32 @@ async def add_memory(
         )
 
     memory = Memories.insert_new_memory(user.id, form_data.content)
+    if memory is None:
+        raise HTTPException(status_code=500, detail='Failed to save memory')
 
-    vector = await request.app.state.EMBEDDING_FUNCTION(memory.content, user=user)
-
-    VECTOR_DB_CLIENT.upsert(
-        collection_name=f'user-memory-{user.id}',
-        items=[
-            {
-                'id': memory.id,
-                'text': memory.content,
-                'vector': vector,
-                'metadata': {'created_at': memory.created_at},
-            }
-        ],
-    )
+    try:
+        vector = await request.app.state.EMBEDDING_FUNCTION(memory.content, user=user)
+        VECTOR_DB_CLIENT.upsert(
+            collection_name=f'user-memory-{user.id}',
+            items=[
+                {
+                    'id': memory.id,
+                    'text': memory.content,
+                    'vector': vector,
+                    'metadata': {
+                        'created_at': memory.created_at,
+                        'updated_at': memory.updated_at,
+                        'scope': memory.scope,
+                        'source_date': memory.source_date,
+                        'importance_score': memory.importance_score,
+                    },
+                }
+            ],
+        )
+    except Exception as e:
+        Memories.delete_memory_by_id(memory.id)
+        log.error(f'memory: failed to embed/index memory {memory.id}, rolled back: {e}')
+        raise HTTPException(status_code=500, detail='Failed to index memory')
 
     return memory
 
@@ -322,3 +334,143 @@ async def delete_memory_by_id(
         return True
 
     return False
+
+
+############################
+# GetMemoryProfile
+############################
+
+
+@router.get('/profile', response_model=Optional[MemoryProfileModel])
+async def get_memory_profile(
+    request: Request,
+    user=Depends(get_verified_user),
+    db: Session = Depends(get_session),
+):
+    if not request.app.state.config.ENABLE_MEMORIES:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=ERROR_MESSAGES.NOT_FOUND,
+        )
+
+    if not has_permission(user.id, 'features.memories', request.app.state.config.USER_PERMISSIONS):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=ERROR_MESSAGES.ACCESS_PROHIBITED,
+        )
+
+    return MemoryProfiles.get_profile(user.id)
+
+
+############################
+# ExtractMemoriesFromMessages
+# Manually trigger memory extraction from a conversation
+############################
+
+
+class ExtractMemoriesForm(BaseModel):
+    messages: List[dict]
+    model: str
+    full_scan: bool = False  # True = scan entire conversation, False = current exchange only
+
+
+@router.post('/extract', response_model=list[MemoryModel])
+async def extract_memories_from_messages(
+    request: Request,
+    form_data: ExtractMemoriesForm,
+    user=Depends(get_verified_user),
+):
+    """
+    Manually trigger long-term memory extraction from a conversation.
+
+    - full_scan=false (default): extracts only from the last user+assistant exchange
+    - full_scan=true: scans the entire conversation history (use on first activation)
+
+    Returns current memory list after extraction.
+    """
+    from open_webui.utils.memory_extractor import (
+        extract_and_store_memories,
+        extract_and_store_memories_full,
+    )
+
+    if not request.app.state.config.ENABLE_MEMORIES:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=ERROR_MESSAGES.NOT_FOUND,
+        )
+
+    if not has_permission(user.id, 'features.memories', request.app.state.config.USER_PERMISSIONS):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=ERROR_MESSAGES.ACCESS_PROHIBITED,
+        )
+
+    if form_data.full_scan:
+        await extract_and_store_memories_full(request, form_data.messages, form_data.model, user)
+    else:
+        await extract_and_store_memories(request, form_data.messages, form_data.model, user)
+
+    return Memories.get_memories_by_user_id(user.id) or []
+
+
+############################
+# IndexChatHistory
+# Retroactively index all user chats into ChromaDB cold layer
+# so that search_chat_history works on existing conversations
+############################
+
+
+class IndexChatHistoryResponse(BaseModel):
+    indexed: int
+    skipped: int
+    errors: int
+
+
+@router.post('/index-chat-history', response_model=IndexChatHistoryResponse)
+async def index_chat_history(
+    request: Request,
+    user=Depends(get_verified_user),
+):
+    """
+    Retroactively index all user's chats into ChromaDB (cold layer).
+    Needed for search_chat_history to work on conversations that existed
+    before the cold layer feature was added.
+
+    Safe to call multiple times — uses upsert (no duplicates).
+    """
+    from open_webui.models.chats import Chats
+    from open_webui.utils.chat_summarizer import save_chat_messages_to_vectordb
+
+    if not has_permission(user.id, 'features.memories', request.app.state.config.USER_PERMISSIONS):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=ERROR_MESSAGES.ACCESS_PROHIBITED,
+        )
+
+    all_chats = Chats.get_chats_by_user_id(user.id)
+    if not all_chats:
+        return IndexChatHistoryResponse(indexed=0, skipped=0, errors=0)
+
+    indexed = 0
+    skipped = 0
+    errors = 0
+
+    for chat in all_chats:
+        try:
+            messages = []
+            chat_data = chat.chat if hasattr(chat, 'chat') and chat.chat else {}
+            if isinstance(chat_data, dict):
+                messages = chat_data.get('messages', [])
+            if not messages:
+                skipped += 1
+                continue
+            await save_chat_messages_to_vectordb(chat.id, user, messages, request)
+            indexed += 1
+        except Exception as e:
+            log.error(f'index_chat_history: failed to index chat {chat.id}: {e}')
+            errors += 1
+
+    log.info(
+        f'index_chat_history: user={user.id} indexed={indexed} skipped={skipped} errors={errors}'
+    )
+    return IndexChatHistoryResponse(indexed=indexed, skipped=skipped, errors=errors)
