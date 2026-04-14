@@ -651,4 +651,8 @@ async def stream_route(payload: dict, api_key: str, user_id: str = ''):
     )
     body = '\n\n---\n\n'.join(r['content'] for r in visible_results)
     yield _sse_chunk(body)
+<<<<<<< HEAD
     yield _sse_done()
+=======
+    yield _sse_done()
+>>>>>>> 012b61dd558d078e9eee6293195237889af68938
