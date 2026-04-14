@@ -594,9 +594,7 @@ async def stream_route(payload: dict, api_key: str, user_id: str = ''):
         if is_intermediate:
             model_name = r.get('model', '?')
             label = TASK_LABELS.get(r.get('task_type', ''), r.get('task_type', '?'))
-            parts.append(
-                f'<details>\n<summary>{label} ({model_name})</summary>\n\n{r["content"]}\n\n</details>'
-            )
+            parts.append(f'<details>\n<summary>{label} ({model_name})</summary>\n\n{r["content"]}\n\n</details>')
         else:
             parts.append(r['content'])
 
