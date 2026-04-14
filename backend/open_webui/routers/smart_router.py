@@ -479,7 +479,7 @@ async def stream_route(payload: dict, api_key: str, user_id: str = ''):
             log.info(f'[smart_router] msg[{mi}] role={role} list-parts: {[p.get("type") for p in content]}')
             for pi, part in enumerate(content):
                 if part.get('type') == 'text':
-                    log.info(f'[smart_router] msg[{mi}] part[{pi}] text first 400: {part.get("text","")[:400]!r}')
+                    log.info(f'[smart_router] msg[{mi}] part[{pi}] text first 400: {part.get("text", "")[:400]!r}')
         else:
             log.info(f'[smart_router] msg[{mi}] role={role} str first 400: {str(content)[:400]!r}')
 
