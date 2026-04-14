@@ -47,7 +47,6 @@ from open_webui.constants import ERROR_MESSAGES
 
 from open_webui.utils.payload import (
     apply_model_params_to_body_openai,
-    apply_response_formatting_prompt_to_body,
     apply_system_prompt_to_body,
 )
 from open_webui.utils.misc import (
@@ -1039,10 +1038,6 @@ async def generate_chat_completion(
 
     # ── Smart Router ──────────────────────────────────────────────────────────
     if model_id == 'auto':
-        if not bypass_system_prompt:
-            payload = apply_response_formatting_prompt_to_body(payload)
-
-        from open_webui.routers.smart_router import complete_route as _complete_route
         from open_webui.routers.smart_router import stream_route as _stream_route
 
         # Find the MWS connection by URL instead of assuming it's at index 0
@@ -1055,12 +1050,10 @@ async def generate_chat_completion(
                 break
         if not _mws_key:
             _mws_key = _keys[0] if _keys else ''
-        if payload.get('stream', True):
-            return StreamingResponse(
-                _stream_route(payload, _mws_key, user_id=user.id),
-                media_type='text/event-stream',
-            )
-        return await _complete_route(payload, _mws_key, user_id=user.id)
+        return StreamingResponse(
+            _stream_route(payload, _mws_key, user_id=user.id),
+            media_type='text/event-stream',
+        )
     # ─────────────────────────────────────────────────────────────────────────
 
     model_info = Models.get_model_by_id(model_id)
@@ -1106,9 +1099,6 @@ async def generate_chat_completion(
                 status_code=403,
                 detail='Model not found',
             )
-
-    if not bypass_system_prompt:
-        payload = apply_response_formatting_prompt_to_body(payload)
 
     # Check if model is already in app state cache to avoid expensive get_all_models() call
     models = request.app.state.OPENAI_MODELS
